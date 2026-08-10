@@ -187,6 +187,20 @@ curl -X POST https://alert.d-t.pw/alert \
 
 ### Python — SDK (recommended)
 
+**Install** — the SDK lives in this repository under [`sdk/python/`](../sdk/python/) and can be installed straight from GitHub:
+
+```bash
+pip install "git+https://github.com/jimidarke/alertManager.git#subdirectory=sdk/python"
+```
+
+**Check for updates** — the repo is public at <https://github.com/jimidarke/alertManager>; releases are tagged `vX.Y.Z` and SDK-specific changes are listed in [`sdk/python/CHANGELOG.md`](../sdk/python/CHANGELOG.md). To pick up the latest version:
+
+```bash
+pip install --upgrade --force-reinstall "git+https://github.com/jimidarke/alertManager.git#subdirectory=sdk/python"
+```
+
+(Or clone the repo and `pip install -e sdk/python` for a checkout you can `git pull`.)
+
 ```python
 from alertmanager_sdk import AlertClient
 

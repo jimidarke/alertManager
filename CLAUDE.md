@@ -13,6 +13,15 @@ The Alert Manager captures JSON alert payloads via HTTPS (`POST /alert`, the sol
 
 **As of v2.0.2**: MQTT and SNMPv3 are no longer alert-ingestion paths. MQTT remains in active use for LED sign device communication (display push + telemetry, see "MQTT Broker" below) but is not a way to submit an alert into the system -- the internal `alerts/input` topic is service-to-service plumbing (feed-aggregator -> alert-router), never a client-facing ingestion contract. SNMPv3 trap ingestion is deprecated outright (see "SNMP Gateway" below) -- it was built for potential SNMP-trap-only network hardware that never materialized in production.
 
+## Public Repository
+
+**As of 2026-08-09 this repo is PUBLIC** at <https://github.com/jimidarke/alertManager> (MIT license), with history purged to a single root commit ("Initial public release (v3.1.1)") — the old history contained leaked keys/hashes and must never be re-pushed. Rules that follow from this:
+
+- **Never commit real personal data or credentials.** The tracked tree uses sanitized placeholders: emails are `yourdomain.com`/`example.com`, the example client is `acme-co`, SNMP doc passwords are `AUTH-PASSWORD-HERE`/`PRIV-PASSWORD-HERE`. Keep it that way in all new code, docs, and configs.
+- **`data/config/docker.json` in git is a sanitized template.** The real production copy lives server-side only (`/opt/docker/alert-manager`) with real recipient emails and client names — never overwrite it with the repo copy on deploy, and never copy its real values back into git.
+- `.claude/` is gitignored (local settings stay local).
+- The Python SDK is public-installable: `pip install "git+https://github.com/jimidarke/alertManager.git#subdirectory=sdk/python"` (documented in `docs/CLIENTNODE.md`).
+
 ## Core Architecture
 
 ### Pathway System
