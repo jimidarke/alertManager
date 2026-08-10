@@ -1,0 +1,157 @@
+<!--
+  Alert Manager - admin: users list (Task 27)
+
+  Extends layout.html (Task 24). Replaces Task 23's minimal stub (its own
+  report: "Task 27 replaces these files' CONTENTS wholesale; the template
+  NAMES and the context variables each view passes ... are the contract").
+
+  Rendered by gateway/admin/routes.py's list_users() (GET /admin/users),
+  which passes:
+    - users: one dict per account -- UserStore.list_users()'s own row
+      (id, username, status, default_client, must_change_password,
+      failed_attempts, locked_until, last_login_at [epoch
+      seconds int, or None], created_at, updated_at) merged with three
+      keys list_users() computes itself: roles (list[str], already
+      PERSONAL_ROLE_PREFIX-filtered -- a user's ad-hoc "user:<name>" scope
+      bucket never appears here), scopes (dict[str, frozenset[str]],
+      principal.scopes -- UserStore's own cross-role aggregate, NOT
+      filtered, so a scope granted only via the personal role still shows
+      up here exactly like one from a named role), is_master_admin (bool).
+    - current_user_id: g.principal.user_id (int) -- the ACTING admin's own
+      id, used only for the "(you)" marker; every actual guard-rail
+      decision (self-disable, self-de-admin) lives server-side in
+      routes.py, this is display-only and never gates a button's presence.
+    - master_admin_role: the literal MASTER_ADMIN_ROLE constant
+      ("master_admin") -- a small Task 27 addition to list_users()'s
+      context (previously only users/current_user_id), so the master_admin
+      ROLE TAG can get the same red warning treatment user_form.html's
+      checkbox gets without this template hardcoding that string a second
+      time. See task-27-report.md for why.
+
+  Last-login display matches dashboard.html's (Task 25) own Time column
+  convention exactly: a relative string (common.js's timeAgo) stacked over
+  an absolute, timezone-localized string (common.js's formatLocalizedTime),
+  filled in client-side by the inline script below rather than rendered
+  server-side -- epoch -> local-timezone conversion is inherently a
+  client-side operation (same reasoning dashboard.js's own createTimeCell
+  already established). The `.time-relative`/`.time-absolute` classes
+  themselves are generalized into base.css (Task 27) from dashboard.css
+  (Task 25) so this page can reuse the exact same look without loading
+  dashboard.css.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Admin: Users{% endblock %}
+
+{% block content %}
+<div class="admin-users">
+  <div class="page-header">
+    <h1>Users</h1>
+    <a href="{{ url_for('admin.new_user_form') }}" class="btn btn-primary">+ New user</a>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Status</th>
+          <th>Roles</th>
+          <th>Scopes</th>
+          <th>Last login</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td>
+            <a href="{{ url_for('admin.edit_user_form', username=user.username) }}">{{ user.username }}</a>
+            {% if user.id == current_user_id %}<span class="tiny">(you)</span>{% endif %}
+          </td>
+          <td>
+            <span class="status-pill status-{{ user.status }}">{{ user.status }}</span>
+          </td>
+          <td>
+            <div class="tag-group">
+              {% for role in user.roles %}
+              <span class="badge {% if role == master_admin_role %}badge-admin{% else %}badge-user{% endif %}">{{ role }}</span>
+              {% else %}
+              <span class="tiny">-</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            {% if user.scopes %}
+            {% for client, perms in user.scopes.items() %}{{ client }}: {{ perms | sort | join(', ') }}{% if not loop.last %}; {% endif %}{% endfor %}
+            {% else %}
+            <span class="tiny">-</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if user.last_login_at %}
+            <span class="time-relative" data-epoch="{{ user.last_login_at }}">-</span>
+            <span class="time-absolute" data-epoch="{{ user.last_login_at }}"></span>
+            {% else %}
+            <span class="tiny">Never</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="row-actions">
+              <a href="{{ url_for('admin.edit_user_form', username=user.username) }}" class="btn btn-secondary">Edit</a>
+              {% if user.status == 'active' %}
+              <form method="post" action="{{ url_for('admin.disable_user', username=user.username) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Disable</button>
+              </form>
+              {% else %}
+              <form method="post" action="{{ url_for('admin.enable_user', username=user.username) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Enable</button>
+              </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('admin.reset_password', username=user.username) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Reset password</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="tiny">No users yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Fills in the relative/absolute last-login text -- see this file's
+  // header comment for why this is client-side (matches dashboard.js's
+  // own createTimeCell convention, Task 25) rather than server-rendered.
+  (function () {
+    "use strict";
+    var common = window.AlertManagerCommon;
+    if (!common) {
+      return;
+    }
+    var tz = common.getSelectedTimezone();
+    document.querySelectorAll(".time-relative[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.timeAgo(epoch);
+      }
+    });
+    document.querySelectorAll(".time-absolute[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.formatLocalizedTime(epoch, tz);
+      }
+    });
+  })();
+</script>
+{% endblock %}

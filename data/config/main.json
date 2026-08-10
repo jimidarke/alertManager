@@ -1,0 +1,101 @@
+{
+  "mqtt": {
+    "broker": "alert.d-t.pw",
+    "port": 42690,
+    "use_tls": true,
+    "ca_cert": "/data/certs/ca.crt",
+    "cert_file": "/data/certs/client.crt",
+    "key_file": "/data/certs/client.key",
+    "input_topic": "alerts/input",
+    "status_topic": "alerts/service/status"
+  },
+  "logging": {
+    "level": "INFO",
+    "console": true,
+    "file": "./logs/ops/alert-router.{date}.log"
+  },
+  "pathways": {
+    "console_alerts": {
+      "type": "console",
+      "enabled": true,
+      "format": "{timestamp} [{level}] {title}: {message}",
+      "prefix": "ALERT:"
+    },
+    "file_log": {
+      "type": "file",
+      "enabled": true,
+      "path": "./logs/file/{date}.log",
+      "format": "{timestamp} [{level}] [{category}] {source}: {title} - {message}",
+      "create_directories": true,
+      "append_mode": true,
+      "rotation_period": "weekly"
+    },
+    "led_sign": {
+      "type": "led_sign",
+      "enabled": true,
+      "broker": "alert.d-t.pw",
+      "port": 42690,
+      "use_tls": true,
+      "ca_cert": "/data/certs/ca.crt",
+      "cert_file": "/data/certs/client.crt",
+      "key_file": "/data/certs/client.key",
+      "base_topic": "ledSign/{zone}/",
+      "default_zone": "main",
+      "zones": {
+        "main": {
+          "enabled": true,
+          "format": "[{level}] {title}: {message}",
+          "max_message_length": 200
+        }
+      }
+    },
+    "email_alerts": {
+      "type": "email",
+      "enabled": false,
+      "method": "graph",
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["admin@yourdomain.com"],
+      "subject_template": "Alert: {title}",
+      "html_format": true
+    }
+  },
+  "routing_rules": [
+    {
+      "name": "Critical Security Alerts",
+      "conditions": {
+        "level": ["critical"],
+        "category": ["security"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_sign", "email_alerts"]
+    },
+    {
+      "name": "Critical System Alerts", 
+      "conditions": {
+        "level": ["critical"],
+        "category": ["system", "network"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_sign", "email_alerts"]
+    },
+    {
+      "name": "Warning Alerts",
+      "conditions": {
+        "level": ["warning"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_sign"]
+    },
+    {
+      "name": "Info Alerts",
+      "conditions": {
+        "level": ["info"]
+      },
+      "pathways": ["console_alerts", "file_log"]
+    },
+    {
+      "name": "Debug Alerts",
+      "conditions": {
+        "level": ["debug"]
+      },
+      "pathways": ["file_log"]
+    }
+  ]
+}

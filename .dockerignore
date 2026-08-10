@@ -1,0 +1,60 @@
+# Docker build context exclusions
+
+# Log files
+*.log
+data/logs/**
+data/mosquitto/log/**
+data/mosquitto/data/**
+
+# Data directories
+data/archive/**
+data/certs/**
+data/mosquitto/**
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation (already in container if needed)
+docs/
+*.md
+!requirements.txt
+
+# Docker files (not needed in image)
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+.dockerignore
+
+# Environment files
+.env
+.env.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+data/mosquitto/data

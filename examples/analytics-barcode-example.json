@@ -1,0 +1,36 @@
+{
+  "analytics": {
+    "enabled": true,
+    "run_on_startup": false,
+    "logging": {
+      "level": "INFO",
+      "file": "/data/logs/ops/analytics-engine.{date}.log"
+    },
+    "email": {
+      "enabled": true,
+      "from_address": "alerts@yourdomain.com",
+      "html_format": true
+    },
+    "analyzers": {
+      "acme-barcode-not-found": {
+        "enabled": true,
+        "type": "barcode_not_found",
+        "client": "acme-co",
+        "log_path_pattern": "/data/logs/file/acme-co/{date}.log",
+        "rotation_period": "weekly",
+        "analysis_period_days": 7,
+        "title_pattern": "Price check failed",
+        "message_pattern": "Product not found for UPC=(\\d+)(?:,\\s*device=([a-f0-9]+))?",
+        "schedule": {
+          "frequency": "weekly",
+          "day_of_week": "monday",
+          "time": "09:00"
+        },
+        "email_recipients": [
+          "reports@example.com"
+        ],
+        "email_subject": "Weekly Barcode Lookup Failure Report - Acme Co"
+      }
+    }
+  }
+}

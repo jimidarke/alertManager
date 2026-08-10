@@ -1,0 +1,147 @@
+{% import "emails/components/alert_macros.html.j2" as macros %}
+{%- set lv = (level or 'critical')|lower -%}
+{%- set c = macros.LEVEL_COLORS.get(lv, macros.LEVEL_COLORS['critical']) -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>Alert Storm - {{ alert_count|default(0) }} alerts</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+    <style>
+    {{ macros.dark_mode_css() }}
+    </style>
+</head>
+<body class="em-bg" style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: Arial, Verdana, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">
+    <!-- Wrapper Table -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-bg" style="background-color: #f5f5f5; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                <!-- Main Container -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="em-container em-level-border-{{ lv }}" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; border-top: 4px solid {{ c.light_fg }}; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                    <!-- Header with Red Accent -->
+                    <tr>
+                        <td style="padding: 0; border-radius: 8px 8px 0 0;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="padding: 24px 30px; background: linear-gradient(135deg, #ffffff 0%, #fef5f5 100%);">
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td style="vertical-align: middle; text-align: center;">
+                                                    <div class="em-title" style="font-size: 26px; font-weight: 700; color: {{ c.light_fg }}; margin: 0; line-height: 1.2;">
+                                                        ALERT STORM &mdash; {{ alert_count|default(0) }} alert{{ '' if alert_count == 1 else 's' }}
+                                                    </div>
+                                                    <div class="em-text-secondary" style="font-size: 13px; color: #666666; margin-top: 6px; font-weight: 500;">
+                                                        Revelstoke Snowmobile Club &middot; Multiple Operations Alerts
+                                                    </div>
+                                                    <div style="margin-top: 12px;">
+                                                        {{ macros.client_banner(client=client, clients=clients) if (client or clients) else macros.client_banner(client='revysmc') }}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Summary Card: window / duration / sources / time range -->
+                    <tr>
+                        <td style="padding: 20px 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #fff3cd; border-radius: 6px; border-left: 3px solid #d68910;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        <div style="font-size: 14px; font-weight: 600; color: #856404; margin-bottom: 10px;">
+                                            Alert Storm Summary
+                                        </div>
+                                        {% set summary_rows = [
+                                            {'label': 'Aggregation Window', 'value': (aggregation_window|default(10))|string ~ ' seconds'},
+                                            {'label': 'Duration', 'value': (duration_seconds|default(0))|string ~ ' seconds'},
+                                            {'label': 'Sources', 'value': unique_sources|default([])|join(', ')},
+                                            {'label': 'Time Range (Mountain)', 'value': (first_timestamp|datetime_format('%I:%M:%S %p') ~ ' - ' ~ last_timestamp|datetime_format('%I:%M:%S %p %Z')) if first_timestamp and last_timestamp else 'N/A', 'mono': true},
+                                        ] %}
+                                        {{ macros.details_table(summary_rows) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Alerts Table (zebra-striped) -->
+                    <tr>
+                        <td style="padding: 0 30px 20px 30px;">
+                            <div class="em-text-secondary" style="font-size: 14px; font-weight: 600; color: #333333; margin-bottom: 12px;">
+                                Alert Details
+                            </div>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-hairline" style="border: 1px solid #dee2e6; border-radius: 6px; overflow: hidden;">
+                                <!-- Table Header -->
+                                <tr>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-size: 12px; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; width: 70px;">Time</td>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-size: 12px; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; width: 90px;">Category</td>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-size: 12px; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">Alert</td>
+                                </tr>
+                                <!-- Alert Rows -->
+                                {% for alert in alerts %}
+                                <tr class="{{ 'em-row-odd' if loop.index is odd else 'em-row-even' }}" style="background-color: {{ '#ffffff' if loop.index is odd else '#fafafa' }};">
+                                    <td class="em-text em-hairline" style="padding: 10px 12px; font-size: 12px; color: #333333; border-bottom: 1px solid #eee; font-family: 'Courier New', monospace; vertical-align: top;">
+                                        {{ alert.timestamp|datetime_format('%I:%M:%S %p') if alert.timestamp else 'N/A' }}
+                                    </td>
+                                    <td class="em-text-secondary em-hairline" style="padding: 10px 12px; font-size: 11px; color: #666666; border-bottom: 1px solid #eee; vertical-align: top; text-transform: capitalize;">
+                                        {{ alert.category|default('General') }}
+                                    </td>
+                                    <td class="em-text em-hairline" style="padding: 10px 12px; font-size: 12px; color: #333333; border-bottom: 1px solid #eee; vertical-align: top;">
+                                        <strong style="color: {{ c.light_fg }};">{{ alert.title|default('Untitled') }}</strong><br>
+                                        <span class="em-text-secondary" style="color: #666666; font-size: 11px;">{{ alert.message|default('')|truncate(100) }}</span>
+                                        {% if alert.source %}
+                                        <br><span class="em-text-secondary" style="color: #999999; font-size: 10px;">Source: {{ alert.source }}</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Action Notice -->
+                    <tr>
+                        <td style="padding: 0 30px 30px 30px;">
+                            <div style="background-color: #fef9e7; border-left: 3px solid #d68910; border-radius: 6px; padding: 16px 20px;">
+                                <div style="font-size: 13px; color: #856404; line-height: 1.5;">
+                                    <strong style="display: block; margin-bottom: 6px;">Action Required</strong>
+                                    Multiple critical operations alerts were received in rapid succession. This may indicate a significant operational issue requiring immediate attention and investigation.
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="em-footer em-hairline" style="padding: 20px 30px; background-color: #f9f9f9; border-top: 1px solid #eeeeee; border-radius: 0 0 8px 8px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <div class="em-footer-text" style="font-size: 12px; color: #888888; line-height: 1.6;">
+                                            <strong style="color: #007acc;">Revelstoke Snowmobile Club</strong><br>
+                                            Alert Management System - Storm Prevention &middot; v{{ version|default('') }}<br>
+                                            <span style="font-size: 11px; color: #aaaaaa;">Automated notification - do not reply</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

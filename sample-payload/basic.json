@@ -1,0 +1,15 @@
+{
+  "timestamp": 1704045600,
+  "level": "info",
+  "category": "system",
+  "title": "System Status Update",
+  "message": "Service monitoring check completed successfully",
+  "source": {
+    "id": "monitoring-service",
+    "type": "service",
+    "metadata": {
+      "version": "1.2.3",
+      "host": "server01.example.com"
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "timestamp": 1704045600,
+  "level": "critical",
+  "category": "security",
+  "title": "Security Alert: Unauthorized Access Detected",
+  "message": "Multiple failed login attempts detected from suspicious IP address. Immediate attention required.",
+  "source": {
+    "id": "security-monitor-01",
+    "type": "security_service",
+    "metadata": {
+      "version": "2.1.4",
+      "host": "security.example.com",
+      "region": "us-east-1",
+      "instance_id": "i-0123456789abcdef0"
+    }
+  },
+  "metadata": {
+    "ip_address": "192.168.1.100",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "failed_attempts": 15,
+    "time_window": "5_minutes",
+    "geolocation": {
+      "country": "Unknown",
+      "city": "Unknown"
+    },
+    "led_zones": ["office", "security_desk"],
+    "priority": true
+  },
+  "routing": {
+    "override": true,
+    "pathways": ["email_critical", "led_security", "file_security"],
+    "exclude": ["console_debug"]
+  },
+  "pathway_config": {
+    "led_security": {
+      "zones": {
+        "office": {
+          "display_config": {
+            "mode": "flash",
+            "special_effect": "bomb",
+            "color": "red",
+            "character_set": "7highfancy",
+            "speed": 5,
+            "priority": true,
+            "duration": 30
+          }
+        },
+        "security_desk": {
+          "display_config": {
+            "mode": "explode",
+            "special_effect": "starburst",
+            "color": "red",
+            "character_set": "10high",
+            "speed": 4,
+            "priority": true,
+            "duration": 45
+          }
+        }
+      }
+    },
+    "email_critical": {
+      "to_addresses": ["security@example.com", "admin@example.com"],
+      "subject_template": "URGENT: {title}",
+      "html_format": true
+    },
+    "file_security": {
+      "filename": "./logs/security-alerts.log",
+      "format": "{timestamp} [SECURITY-{level}] {source.id}: {title} | IP: {metadata.ip_address} | Attempts: {metadata.failed_attempts}",
+      "create_directories": true
+    }
+  }
+}

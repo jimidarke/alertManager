@@ -1,0 +1,57 @@
+# Alert Manager Dependencies
+
+# Core MQTT communication
+paho-mqtt>=1.6.0
+
+# Environment variables and configuration
+python-dotenv>=1.0.0
+
+# Timezone handling
+pytz>=2023.3
+
+# HTTP requests for webhooks and APIs
+requests>=2.31.0
+
+# Microsoft Authentication Library for O365 Graph API
+msal>=1.25.0
+
+# Feed aggregator scheduling
+APScheduler>=3.10.0
+
+# Analytics engine scheduling and templating
+schedule>=1.2.0
+Jinja2>=3.1.0
+premailer>=3.10.0
+
+# HTTP gateway service
+Flask>=2.3.0
+
+# gateway v2 (src/gateway/) -- CSRF protection for the session-cookie auth
+# blueprint (Task 19, docs/OVERHAUL_PLAN.md section 4.4).
+Flask-WTF>=1.2
+
+# gateway v2 WSGI server (Task 28, docs/OVERHAUL_PLAN.md section 4.9):
+# 1 worker x 8 gthread threads, see docker-compose.yml's http-gateway command.
+gunicorn>=21.2
+
+# SNMP gateway service
+pysnmp>=7.1.0  # SNMP v3 trap receiver and client
+pysmi>=1.1.0   # MIB compiler for OID translation
+
+# PostgreSQL database support
+psycopg2-binary>=2.9.0  # PostgreSQL adapter (binary for easier install)
+
+# Password hashing (src/userstore/passwords.py) -- argon2id via PasswordHasher's own defaults
+argon2-cffi>=23.1
+
+# Optional: Enhanced JSON handling
+# orjson>=3.9.0
+
+# Optional: Additional email libraries for advanced features
+# exchangelib>=5.0.0  # For Exchange/Outlook integration
+
+# Development and testing
+# pytest>=7.0.0
+# pytest-mock>=3.10.0
+# black>=23.0.0
+# flake8>=6.0.0

@@ -1,0 +1,27 @@
+{% extends "emails/base.html.j2" %}
+
+{% block content %}
+<!-- Summary Stats -->
+{% include "emails/components/summary_card.html.j2" %}
+
+<!-- Barcode Table -->
+{% if has_data %}
+{% include "emails/components/data_table.html.j2" %}
+{% else %}
+<div style="padding: 20px; background-color: #eafaf1; border-left: 4px solid #1e8449; border-radius: 4px; color: #1e8449; font-size: 14px;">
+    No barcode lookup failures detected during this period.
+</div>
+{% endif %}
+
+<!-- Recommendations -->
+{% if recommendations %}
+<div style="margin-top: 25px;">
+    <h3 style="margin: 0 0 10px 0; font-size: 15px; color: #333333;">Recommendations</h3>
+    <ul style="margin: 0; padding-left: 20px; color: #333333; font-size: 13px; line-height: 1.8;">
+        {% for rec in recommendations %}
+        <li>{{ rec }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+{% endblock %}

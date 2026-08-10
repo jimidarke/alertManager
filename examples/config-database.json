@@ -1,0 +1,146 @@
+{
+  "mqtt": {
+    "broker": "mqtt-broker",
+    "port": 1883,
+    "use_tls": false,
+    "input_topic": "alerts/input",
+    "status_topic": "alerts/service/status"
+  },
+  "pathways": {
+    "console_alerts": {
+      "type": "console",
+      "enabled": true,
+      "format": "[{level}] {category} - {title}: {message}",
+      "level_filter": ["critical", "warning", "notice", "info"]
+    },
+    "file_log": {
+      "type": "file",
+      "enabled": true,
+      "path": "/data/logs/file/{date}.log",
+      "format": "{timestamp} [{level}] [{category}] {source} [{client}]: {title} - {message}",
+      "create_directories": true,
+      "append_mode": true,
+      "per_client_files": true,
+      "client_path_template": "/data/logs/file/{client}/{date}.log",
+      "rotation_period": "weekly"
+    },
+    "database_log": {
+      "type": "database",
+      "enabled": true,
+      "connection": {
+        "host": "${POSTGRES_HOST}",
+        "port": "${POSTGRES_PORT}",
+        "database": "${POSTGRES_DB}",
+        "user": "${POSTGRES_USER}",
+        "password": "${POSTGRES_PASSWORD}"
+      },
+      "batch_size": 100,
+      "batch_timeout": 5
+    },
+    "email_critical": {
+      "type": "email",
+      "enabled": false,
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["admin@yourdomain.com"],
+      "subject_template": "CRITICAL ALERT: {title}",
+      "html_format": true
+    }
+  },
+  "routing_rules": [
+    {
+      "name": "Critical to Email",
+      "conditions": {
+        "level": ["critical"]
+      },
+      "pathways": ["email_critical", "file_log", "database_log", "console_alerts"]
+    },
+    {
+      "name": "All Alerts to File and Database",
+      "conditions": {},
+      "pathways": ["file_log", "database_log", "console_alerts"]
+    }
+  ],
+  "analytics": {
+    "enabled": true,
+    "use_database": true,
+    "database": {
+      "enabled": true,
+      "host": "${POSTGRES_HOST}",
+      "port": "${POSTGRES_PORT}",
+      "database": "${POSTGRES_DB}",
+      "user": "${POSTGRES_USER}",
+      "password": "${POSTGRES_PASSWORD}",
+      "pool_size": 5,
+      "max_overflow": 10
+    },
+    "email": {
+      "enabled": true,
+      "from_address": "analytics@yourdomain.com",
+      "html_format": true
+    },
+    "analyzers": {
+      "barcode_not_found": {
+        "enabled": true,
+        "source": "database",
+        "query_definition": "barcode_not_found_query.json",
+        "analysis_period_days": 7,
+        "client": "inventory-scanner",
+        "email_template": "emails/barcode_not_found.html.j2",
+        "schedule": {
+          "type": "weekly",
+          "day_of_week": "monday",
+          "hour": 8,
+          "minute": 0
+        },
+        "report": {
+          "subject": "Weekly Barcode Analysis Report",
+          "include_summary": true,
+          "max_items": 50
+        }
+      },
+      "system_health": {
+        "enabled": true,
+        "source": "database",
+        "analysis_period_days": 1,
+        "email_template": "emails/system_health.html.j2",
+        "schedule": {
+          "type": "daily",
+          "hour": 9,
+          "minute": 0
+        },
+        "report": {
+          "subject": "Daily System Health Report",
+          "include_charts": true
+        }
+      }
+    }
+  },
+  "http_gateway": {
+    "enabled": true,
+    "port": 8080
+  },
+  "feed_aggregator": {
+    "enabled": true,
+    "mqtt": {
+      "broker": "mqtt-broker",
+      "port": 1883,
+      "topic": "alerts/input"
+    },
+    "client_name": "feed",
+    "feeds": {
+      "news": {
+        "enabled": true,
+        "interval_minutes": 30,
+        "source": "feed-aggregator/rss-news",
+        "rss_url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "num_items": 5,
+        "category": "news",
+        "level": "info"
+      }
+    }
+  },
+  "monitoring": {
+    "status_interval_seconds": 60,
+    "health_check_enabled": true
+  }
+}

@@ -1,0 +1,118 @@
+{% import "emails/components/alert_macros.html.j2" as macros %}
+{%- set lv = (level or 'critical')|lower -%}
+{%- set c = macros.LEVEL_COLORS.get(lv, macros.LEVEL_COLORS['critical']) -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>Alert Storm - {{ alert_count|default(0) }} alerts</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+    <style>
+    {{ macros.dark_mode_css() }}
+    </style>
+</head>
+<body class="em-bg" style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: Arial, Verdana, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">
+    <!-- Wrapper Table -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-bg" style="background-color: #f5f5f5; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                <!-- Main Container -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="em-container em-level-border-{{ lv }}" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; border-top: 4px solid {{ c.light_fg }}; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                    <!-- Header: wordmark + client pill -->
+                    <tr>
+                        <td style="padding: 20px 30px 0 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="vertical-align: middle;">
+                                        <span class="em-wordmark-primary" style="font-size: 16px; font-weight: 700; color: #007acc;">ALERT</span><span class="em-wordmark-secondary em-text" style="font-size: 16px; font-weight: 400; color: #333333;"> MANAGER</span>
+                                    </td>
+                                    <td style="vertical-align: middle; text-align: right;">
+                                        {{ macros.client_banner(client=client, clients=clients) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Storm Header -->
+                    <tr>
+                        <td style="padding: 16px 30px 0 30px; text-align: center;">
+                            <div class="em-title" style="font-size: 20px; font-weight: 700; color: {{ c.light_fg }}; letter-spacing: 0.3px;">ALERT STORM &mdash; {{ alert_count|default(0) }} {{ level|default('critical') }} alert{{ '' if alert_count == 1 else 's' }}</div>
+                            <div class="em-text-secondary" style="font-size: 13px; color: #666666; margin-top: 4px;">received within a {{ aggregation_window|default(10) }}s window</div>
+                        </td>
+                    </tr>
+
+                    <!-- Summary Card: window / duration / sources / time range -->
+                    <tr>
+                        <td style="padding: 18px 30px 20px 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #f9f9f9; border-radius: 6px; border-left: 3px solid {{ c.light_fg }};">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        {% set summary_rows = [
+                                            {'label': 'Aggregation Window', 'value': (aggregation_window|default(10))|string ~ ' seconds'},
+                                            {'label': 'Duration', 'value': (duration_seconds|default(0))|string ~ ' seconds'},
+                                            {'label': 'Sources', 'value': unique_sources|default([])|join(', ')},
+                                            {'label': 'Time Range (Mountain)', 'value': (first_timestamp|datetime_format('%I:%M:%S %p') ~ ' - ' ~ last_timestamp|datetime_format('%I:%M:%S %p %Z')) if first_timestamp and last_timestamp else 'N/A', 'mono': true},
+                                        ] %}
+                                        {{ macros.details_table(summary_rows) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Per-alert table (zebra-striped) -->
+                    <tr>
+                        <td style="padding: 0 30px 20px 30px;">
+                            <div class="em-text-secondary" style="font-size: 13px; font-weight: 600; color: #666666; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.3px;">Alert Detail</div>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-hairline" style="border: 1px solid #dee2e6; border-radius: 6px; overflow: hidden;">
+                                <tr>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; color: #495057; border-bottom: 2px solid #dee2e6; width: 90px; text-transform: uppercase;">Time</td>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; color: #495057; border-bottom: 2px solid #dee2e6; width: 90px; text-transform: uppercase;">Level</td>
+                                    <td class="em-hairline" style="background-color: #f8f9fa; padding: 10px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; color: #495057; border-bottom: 2px solid #dee2e6;">Alert</td>
+                                </tr>
+                                {% for alert in alerts %}
+                                {%- set row_lv = (alert.level or 'info')|lower -%}
+                                {%- set row_c = macros.LEVEL_COLORS.get(row_lv, macros.LEVEL_COLORS['info']) -%}
+                                <tr class="{{ 'em-row-odd' if loop.index is odd else 'em-row-even' }}" style="background-color: {{ '#ffffff' if loop.index is odd else '#f9f9f9' }};">
+                                    <td class="em-text em-hairline" style="padding: 10px 12px; font-family: 'Courier New', Consolas, monospace; font-size: 12px; color: #333333; border-bottom: 1px solid #eeeeee; vertical-align: top;">{{ alert.timestamp|datetime_format('%I:%M:%S %p') if alert.timestamp else 'N/A' }}</td>
+                                    <td class="em-hairline" style="padding: 10px 12px; border-bottom: 1px solid #eeeeee; vertical-align: top;">
+                                        <span style="font-family: Arial, Helvetica, sans-serif; font-size: 10px; font-weight: 700; text-transform: uppercase; color: {{ row_c.light_fg }};">{{ row_lv }}</span>
+                                    </td>
+                                    <td class="em-text em-hairline" style="padding: 10px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #333333; border-bottom: 1px solid #eeeeee; vertical-align: top;">
+                                        <strong>{{ alert.title|default('Untitled') }}</strong><br>
+                                        <span class="em-text-secondary" style="color: #666666; font-size: 11px;">{{ alert.message|default('')|truncate(140) }}</span>
+                                        {% if alert.source %}
+                                        <br><span class="em-text-secondary" style="color: #999999; font-size: 10px;">Source: {{ alert.source }}{% if alert.client %} &middot; Client: {{ alert.client|upper }}{% endif %}</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="em-footer em-hairline" style="padding: 18px 30px; background-color: #f9f9f9; border-top: 1px solid #eeeeee; border-radius: 0 0 8px 8px;">
+                            <div class="em-footer-text" style="text-align: center; font-size: 11px; color: #888888; line-height: 1.6;">
+                                <span style="color: #007acc; font-weight: 700;">Alert Manager</span> v{{ version|default('') }} &middot; Storm Prevention<br>
+                                Automated notification - do not reply
+                            </div>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

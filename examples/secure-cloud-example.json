@@ -1,0 +1,122 @@
+{
+  "service": {
+    "name": "alert-router",
+    "version": "2.0.0",
+    "mqtt_broker": "alert.d-t.pw",
+    "mqtt_port": 46942,
+    "mqtt_use_tls": true,
+    "mqtt_ca_cert": "/data/certs/ca.crt",
+    "mqtt_client_cert": "/data/certs/client.crt",
+    "mqtt_client_key": "/data/certs/client.key",
+    "mqtt_tls_version": "tlsv1.3",
+    "input_topic": "alerts/input",
+    "output_base": "alerts/output",
+    "status_topic": "alerts/service/status",
+    "status_interval": 60,
+    "log_level": "INFO"
+  },
+  "routing_rules": [
+    {
+      "name": "Critical Security Alerts",
+      "priority": 100,
+      "conditions": {
+        "level": ["critical"],
+        "category": ["security"]
+      },
+      "output_topics": [
+        "alerts/output/led/all/priority",
+        "alerts/output/audio/all/emergency",
+        "alerts/output/email/critical",
+        "alerts/output/file/critical",
+        "alerts/output/console/critical"
+      ]
+    },
+    {
+      "name": "Warning Alerts",
+      "priority": 50,
+      "conditions": {
+        "level": ["warning"]
+      },
+      "output_topics": [
+        "alerts/output/led/main/message",
+        "alerts/output/audio/main/chime",
+        "alerts/output/file/standard",
+        "alerts/output/console/standard"
+      ]
+    },
+    {
+      "name": "Info Alerts",
+      "priority": 25,
+      "conditions": {
+        "level": ["info"]
+      },
+      "output_topics": [
+        "alerts/output/file/standard",
+        "alerts/output/console/standard"
+      ]
+    },
+    {
+      "name": "Debug Alerts",
+      "priority": 10,
+      "conditions": {
+        "level": ["debug"]
+      },
+      "output_topics": [
+        "alerts/output/file/debug"
+      ]
+    }
+  ],
+  "output_configs": {
+    "led": {
+      "default_zone": "main",
+      "priority_duration": 30,
+      "standard_duration": 15,
+      "level_colors": {
+        "critical": "red",
+        "warning": "orange",
+        "info": "blue",
+        "debug": "green"
+      },
+      "level_effects": {
+        "critical": "flash",
+        "warning": "pulse",
+        "info": "fade",
+        "debug": "static"
+      }
+    },
+    "audio": {
+      "default_zone": "main",
+      "volume_levels": {
+        "emergency": 100,
+        "standard": 70,
+        "quiet": 40
+      },
+      "tts_voice": "female",
+      "enable_chimes": true
+    },
+    "email": {
+      "method": "graph",
+      "from_address": "alerts@yourdomain.com",
+      "critical_recipients": ["admin@yourdomain.com", "oncall@yourdomain.com"],
+      "standard_recipients": ["admin@yourdomain.com"],
+      "subject_template": "[{level}] {category}: {title}",
+      "html_format": true
+    },
+    "file": {
+      "base_path": "/data/logs",
+      "filename_template": "alerts-{date}.log",
+      "format": "{timestamp} [{level}] [{category}] {source}: {title} - {message}",
+      "rotation_size": "10MB",
+      "retention_days": 30
+    }
+  },
+  "time_restrictions": {
+    "quiet_hours": {
+      "start": "22:00",
+      "end": "07:00",
+      "audio_volume_limit": 30,
+      "led_brightness_limit": 50,
+      "disable_non_critical_audio": true
+    }
+  }
+}

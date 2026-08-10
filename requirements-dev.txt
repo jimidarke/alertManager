@@ -1,0 +1,15 @@
+# Alert Manager - Development/Test Dependencies
+#
+# Install alongside requirements.txt for running the test suite:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   .venv/bin/pytest tests/ -v
+
+pytest>=7.0.0
+pytest-mock>=3.10.0
+
+# Time-travel for tests proving time-dependent behavior (Task 19:
+# CredentialCache TTL boundaries via injected clocks don't need this, but
+# tests/test_gateway_auth_routes.py's session-sliding-lifetime/12h-expiry
+# assertions freeze wall-clock time so Flask/itsdangerous's own cookie
+# expiry math can be exercised deterministically).
+freezegun>=1.4

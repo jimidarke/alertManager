@@ -1,0 +1,153 @@
+{% import "emails/components/alert_macros.html.j2" as macros %}
+{%- set lv = (level or 'critical')|lower -%}
+{%- set c = macros.LEVEL_COLORS.get(lv, macros.LEVEL_COLORS['critical']) -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>{{ title|default('Operations Alert') }}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+    <style>
+    {{ macros.dark_mode_css() }}
+    </style>
+</head>
+<body class="em-bg" style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: Arial, Verdana, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">
+    <!-- Wrapper Table -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-bg" style="background-color: #f5f5f5; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                <!-- Main Container -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="em-container em-level-border-{{ lv }}" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; border-top: 4px solid {{ c.light_fg }}; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                    <!-- Header with Red Accent -->
+                    <tr>
+                        <td style="padding: 0; border-radius: 8px 8px 0 0;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="padding: 24px 30px; background: linear-gradient(135deg, #ffffff 0%, #fef5f5 100%);">
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td style="vertical-align: middle;">
+                                                    <div class="em-title" style="font-size: 24px; font-weight: 600; color: {{ c.light_fg }}; margin: 0; line-height: 1.2;">
+                                                        Operations Alert
+                                                    </div>
+                                                    <div class="em-text-secondary" style="font-size: 13px; color: #666666; margin-top: 4px; font-weight: 500;">
+                                                        Revelstoke Snowmobile Club
+                                                    </div>
+                                                </td>
+                                                <td style="vertical-align: middle; text-align: right;">
+                                                    {{ macros.client_banner(client=client|default('revysmc')) }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Level / Category / Source chips -->
+                    <tr>
+                        <td style="padding: 20px 30px 0 30px;">
+                            {{ macros.level_badge(level|default('critical')) }}
+                            {{ macros.chip('Category', category|default('')|title) }}
+                            {{ macros.chip('Source', source) }}
+                        </td>
+                    </tr>
+
+                    <!-- Alert Title -->
+                    <tr>
+                        <td style="padding: 18px 30px 10px 30px;">
+                            <h1 class="em-title" style="margin: 0; font-size: 20px; font-weight: 600; color: #333333; line-height: 1.3;">
+                                {{ title }}
+                            </h1>
+                        </td>
+                    </tr>
+
+                    <!-- Alert Message (full multiline content preserved) -->
+                    <tr>
+                        <td style="padding: 0 30px 20px 30px;">
+                            <div class="em-text" style="margin: 0; font-size: 15px; color: #555555; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;">
+                                {{ message }}
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Alert Details Card -->
+                    <tr>
+                        <td style="padding: 0 30px 30px 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #f9f9f9; border-radius: 6px; border-left: 3px solid #007acc;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        {% set detail_rows = [
+                                            {'label': 'Time (Mountain)', 'value': timestamp|datetime_format('%Y-%m-%d %I:%M:%S %p %Z') if timestamp else 'N/A', 'mono': true},
+                                            {'label': 'Time (Epoch)', 'value': timestamp if timestamp else 'N/A', 'mono': true},
+                                            {'label': 'Source', 'value': source|default('Unknown')},
+                                            {'label': 'Category', 'value': category|default('General')|title},
+                                            {'label': 'Client', 'value': (client|upper if client else 'REVYSMC')},
+                                        ] %}
+                                        {{ macros.details_table(detail_rows) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Additional Metadata (if present) -->
+                    {% if metadata and metadata|length > 0 %}
+                    <tr>
+                        <td style="padding: 0 30px 30px 30px;">
+                            <div class="em-text-secondary" style="font-size: 14px; font-weight: 600; color: #333333; margin-bottom: 10px;">Additional Information:</div>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #f9f9f9; border-radius: 6px;">
+                                <tr>
+                                    <td style="padding: 12px 16px;">
+                                        {{ macros.metadata_table(metadata) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Action Notice -->
+                    <tr>
+                        <td style="padding: 0 30px 30px 30px;">
+                            <div style="background-color: #fef9e7; border-left: 3px solid #d68910; border-radius: 6px; padding: 16px 20px;">
+                                <div style="font-size: 13px; color: #856404; line-height: 1.5;">
+                                    <strong style="display: block; margin-bottom: 6px;">Action Required</strong>
+                                    This is a critical operations alert that requires immediate attention. Please review and take appropriate action as needed.
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="em-footer em-hairline" style="padding: 20px 30px; background-color: #f9f9f9; border-top: 1px solid #eeeeee; border-radius: 0 0 8px 8px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <div class="em-footer-text" style="font-size: 12px; color: #888888; line-height: 1.6;">
+                                            <strong style="color: #007acc;">Revelstoke Snowmobile Club</strong><br>
+                                            Alert Management System &middot; v{{ version|default('') }}<br>
+                                            <span style="font-size: 11px; color: #aaaaaa;">Automated notification - do not reply</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

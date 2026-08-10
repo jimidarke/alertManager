@@ -1,0 +1,288 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Alert Pathway Configuration Schema",
+  "description": "Comprehensive configuration schema for the alert routing pathway matrix system",
+  "type": "object",
+  "required": ["mqtt", "pathway_matrix", "outputs"],
+  "properties": {
+    "mqtt": {
+      "type": "object",
+      "required": ["broker", "port", "use_tls", "ca_cert", "cert_file", "key_file", "input_topic"],
+      "properties": {
+        "broker": {"type": "string", "default": "alert.d-t.pw"},
+        "port": {"type": "integer", "default": 46942},
+        "use_tls": {"type": "boolean", "default": true},
+        "ca_cert": {"type": "string", "default": "./certs/ca.crt"},
+        "cert_file": {"type": "string", "default": "./certs/client.crt"},
+        "key_file": {"type": "string", "default": "./certs/client.key"},
+        "input_topic": {"type": "string", "default": "alerts/input"},
+        "status_topic": {"type": "string", "default": "alerts/service/status"}
+      }
+    },
+    "pathway_matrix": {
+      "type": "object",
+      "description": "Alert type + level combinations mapped to output pathways",
+      "properties": {
+        "security": {
+          "type": "object",
+          "properties": {
+            "door-open": {"$ref": "#/definitions/alert_level_pathways"},
+            "window-open": {"$ref": "#/definitions/alert_level_pathways"},
+            "motion-detected": {"$ref": "#/definitions/alert_level_pathways"},
+            "security-alarm": {"$ref": "#/definitions/alert_level_pathways"}
+          }
+        },
+        "environmental": {
+          "type": "object", 
+          "properties": {
+            "weather-severe": {"$ref": "#/definitions/alert_level_pathways"},
+            "temperature-extreme": {"$ref": "#/definitions/alert_level_pathways"},
+            "humidity-high": {"$ref": "#/definitions/alert_level_pathways"},
+            "air-quality": {"$ref": "#/definitions/alert_level_pathways"}
+          }
+        },
+        "system": {
+          "type": "object",
+          "properties": {
+            "power-outage": {"$ref": "#/definitions/alert_level_pathways"},
+            "network-down": {"$ref": "#/definitions/alert_level_pathways"},
+            "device-offline": {"$ref": "#/definitions/alert_level_pathways"},
+            "backup-failed": {"$ref": "#/definitions/alert_level_pathways"}
+          }
+        },
+        "automation": {
+          "type": "object",
+          "properties": {
+            "schedule-reminder": {"$ref": "#/definitions/alert_level_pathways"},
+            "task-complete": {"$ref": "#/definitions/alert_level_pathways"},
+            "maintenance-due": {"$ref": "#/definitions/alert_level_pathways"}
+          }
+        },
+        "fallback": {"$ref": "#/definitions/alert_level_pathways"}
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "console": {"$ref": "#/definitions/console_output"},
+        "file": {"$ref": "#/definitions/file_output"},
+        "led_sign": {"$ref": "#/definitions/mqtt_output"},
+        "audio_alerts": {"$ref": "#/definitions/audio_output"},
+        "light_indicators": {"$ref": "#/definitions/light_output"},
+        "mobile_push": {"$ref": "#/definitions/mobile_output"},
+        "email": {"$ref": "#/definitions/email_output"},
+        "sms": {"$ref": "#/definitions/sms_output"}
+      }
+    },
+    "time_restrictions": {
+      "type": "object",
+      "properties": {
+        "quiet_hours": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean", "default": true},
+            "start": {"type": "string", "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "22:00"},
+            "end": {"type": "string", "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$", "default": "07:00"},
+            "volume_limit": {"type": "integer", "minimum": 0, "maximum": 100, "default": 30},
+            "restricted_outputs": {"type": "array", "items": {"type": "string"}, "default": ["audio_alerts"]},
+            "exceptions": {"type": "array", "items": {"type": "string"}, "default": ["critical"]}
+          }
+        },
+        "away_mode": {
+          "type": "object", 
+          "properties": {
+            "enabled": {"type": "boolean", "default": false},
+            "enhanced_security": {"type": "boolean", "default": true},
+            "mobile_only": {"type": "boolean", "default": false},
+            "volume_boost": {"type": "integer", "default": 20}
+          }
+        }
+      }
+    },
+    "escalation_rules": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "acknowledgment_timeout": {"type": "integer", "default": 300},
+        "escalation_levels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "delay_seconds": {"type": "integer"},
+              "additional_outputs": {"type": "array", "items": {"type": "string"}},
+              "volume_increase": {"type": "integer", "default": 10}
+            }
+          }
+        }
+      }
+    },
+    "calendar_integration": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "reminder_minutes": {"type": "integer", "default": 15},
+        "calendar_sources": {"type": "array", "items": {"type": "string"}},
+        "alert_type": {"type": "string", "default": "schedule-reminder"}
+      }
+    }
+  },
+  "definitions": {
+    "alert_level_pathways": {
+      "type": "object",
+      "properties": {
+        "critical": {"type": "array", "items": {"type": "string"}},
+        "warning": {"type": "array", "items": {"type": "string"}},
+        "info": {"type": "array", "items": {"type": "string"}},
+        "debug": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "console_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "format": {"type": "string", "default": "{timestamp} [{level}] {title} - {message}"},
+        "color_coding": {"type": "boolean", "default": true}
+      }
+    },
+    "file_output": {
+      "type": "object", 
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "path": {"type": "string", "default": "/var/log/alerts.log"},
+        "format": {"type": "string", "default": "{timestamp} [{level}] [{type}] {source}: {title} - {message}"},
+        "rotation": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean", "default": true},
+            "max_size": {"type": "string", "default": "10MB"},
+            "backup_count": {"type": "integer", "default": 5}
+          }
+        }
+      }
+    },
+    "mqtt_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": true}, 
+        "topic": {"type": "string"},
+        "format": {"type": "string", "default": "[{level}] {title}: {message}"},
+        "qos": {"type": "integer", "minimum": 0, "maximum": 2, "default": 0},
+        "retain": {"type": "boolean", "default": false}
+      }
+    },
+    "audio_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "zones": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z0-9_]+$": {
+              "type": "object",
+              "properties": {
+                "topic": {"type": "string"},
+                "type": {"type": "string", "enum": ["tts", "tone", "chime"], "default": "tts"},
+                "volume_mapping": {
+                  "type": "object",
+                  "properties": {
+                    "critical": {"type": "integer", "default": 80},
+                    "warning": {"type": "integer", "default": 60},
+                    "info": {"type": "integer", "default": 40},
+                    "debug": {"type": "integer", "default": 20}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tts_settings": {
+          "type": "object",
+          "properties": {
+            "voice": {"type": "string", "default": "en+f3"},
+            "speed": {"type": "integer", "default": 150},
+            "language": {"type": "string", "default": "en-US"}
+          }
+        }
+      }
+    },
+    "light_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "zones": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z0-9_]+$": {
+              "type": "object",
+              "properties": {
+                "topic": {"type": "string"},
+                "type": {"type": "string", "enum": ["ws2812", "smart_bulb", "discrete"], "default": "ws2812"},
+                "color_mapping": {
+                  "type": "object",
+                  "properties": {
+                    "critical": {"type": "string", "default": "#FF0000"},
+                    "warning": {"type": "string", "default": "#FFA500"}, 
+                    "info": {"type": "string", "default": "#0000FF"},
+                    "debug": {"type": "string", "default": "#808080"}
+                  }
+                },
+                "effects": {
+                  "type": "object",
+                  "properties": {
+                    "critical": {"type": "string", "default": "flash"},
+                    "warning": {"type": "string", "default": "pulse"},
+                    "info": {"type": "string", "default": "fade"},
+                    "debug": {"type": "string", "default": "solid"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "mobile_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "service": {"type": "string", "enum": ["pushover", "ntfy", "gotify"], "default": "pushover"},
+        "api_key": {"type": "string"},
+        "user_key": {"type": "string"},
+        "priority_mapping": {
+          "type": "object",
+          "properties": {
+            "critical": {"type": "integer", "default": 2},
+            "warning": {"type": "integer", "default": 1},
+            "info": {"type": "integer", "default": 0},
+            "debug": {"type": "integer", "default": -1}
+          }
+        }
+      }
+    },
+    "email_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "smtp_server": {"type": "string"},
+        "smtp_port": {"type": "integer", "default": 587},
+        "username": {"type": "string"},
+        "password": {"type": "string"},
+        "from_address": {"type": "string"},
+        "to_addresses": {"type": "array", "items": {"type": "string"}},
+        "subject_template": {"type": "string", "default": "Alert: {title}"}
+      }
+    },
+    "sms_output": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "service": {"type": "string", "enum": ["twilio", "textbelt"], "default": "twilio"},
+        "account_sid": {"type": "string"},
+        "auth_token": {"type": "string"},
+        "from_number": {"type": "string"},
+        "to_numbers": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

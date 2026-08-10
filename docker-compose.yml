@@ -1,0 +1,427 @@
+version: '3.8'
+
+# Alert Manager - Complete Stack with Local MQTT Broker
+# External devices connect to port 42690 (TLS), internal services use container network
+
+networks:
+  default:
+    external: true
+    name: WebApps
+
+services:
+  # MQTT Broker - Eclipse Mosquitto
+  mqtt-broker:
+    image: eclipse-mosquitto:latest
+    container_name: alert-mqtt-broker
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    ports:
+      - "42690:8883"     # MQTTS (external TLS with auth) - only external port needed
+    volumes:
+      - ./data/mosquitto/config:/mosquitto/config
+      - ./data/mosquitto/data:/mosquitto/data
+      - ./data/logs/ops:/mosquitto/log      # Operational logs only
+      - ./data/certs:/mosquitto/certs
+    environment:
+      - TZ=America/Edmonton
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "health/check", "-m", "test"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL Database - stores all alerts for analytics and queries
+  postgres:
+    image: postgres:16-alpine
+    container_name: alert-postgres
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    ports:
+      - "127.0.0.1:5432:5432"  # Localhost only, not exposed externally
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d:ro  # Schema initialization
+    environment:
+      - POSTGRES_DB=alertmanager
+      - POSTGRES_USER=alertmanager
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - TZ=America/Edmonton
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alertmanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Database Logger - subscribes to alerts/input and writes to PostgreSQL
+  database-logger:
+    image: alert-router:latest
+    container_name: alert-database-logger
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro
+      - ./data/logs/ops:/data/logs/ops:rw  # Operational logs only
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=alertmanager
+      - POSTGRES_USER=alertmanager
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_POOL_SIZE=10
+      - POSTGRES_MAX_OVERFLOW=20
+      - DB_BATCH_SIZE=100
+      - DB_BATCH_TIMEOUT=5.0
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/data/logs/ops/alert-database-logger.{date}.log
+      - TZ=America/Edmonton
+      - HEARTBEAT_FILE=/data/logs/ops/alert-database-logger.heartbeat
+    command: ["python3", "src/database_logger.py", "--config", "/data/config/docker.json"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt-broker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys; from src.utils import heartbeat; sys.exit(0 if heartbeat.check(os.environ.get('HEARTBEAT_FILE', '/data/logs/ops/alert-database-logger.heartbeat'), max_age=150) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Core Alert Router - parses alerts and publishes to output topics
+  alert-router:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile
+    image: alert-router:latest
+    container_name: alert-router
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/certs:/data/certs:ro         # Certs read-only
+      - ./data/logs/ops:/data/logs/ops:rw   # Operational logs only
+      - ./tools:/data/tools:ro              # Tools read-only
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+      - HEARTBEAT_FILE=/data/logs/ops/alert-router.heartbeat
+      # O365 Graph API configuration (from .env file)
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-}
+      - O365_TENANT_ID=${O365_TENANT_ID:-}
+      - O365_CLIENT_ID=${O365_CLIENT_ID:-}
+      - O365_CLIENT_SECRET=${O365_CLIENT_SECRET:-}
+      # PostgreSQL (email-log writer, Phase 2) - fail-open, no hard dependency
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=alertmanager
+      - POSTGRES_USER=alertmanager
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_POOL_SIZE=10
+      - POSTGRES_MAX_OVERFLOW=20
+    command: ["python3", "src/alert_router.py", "--config", "/data/config/docker.json"]
+    depends_on:
+      - mqtt-broker
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys; from src.utils import heartbeat; sys.exit(0 if heartbeat.check(os.environ.get('HEARTBEAT_FILE', '/data/logs/ops/alert-router.heartbeat'), max_age=150) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # File Logger - subscribes to alerts/input and logs notice/warning/error/critical
+  file-logger:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-file-logger
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/certs:/data/certs:ro         # Certs read-only
+      - ./data/logs/ops:/data/logs/ops:rw   # Operational logs
+      - ./data/logs/file:/data/logs/file:rw # Alert content logs (EXCLUSIVE)
+      - ./data/alert-archive:/data/archive:rw  # Long-term storage
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+      # Distinct from alert-router's heartbeat file: both services run this
+      # same alert_router.py image/command but share the ops log volume, so
+      # they must not collide on one heartbeat file.
+      - HEARTBEAT_FILE=/data/logs/ops/alert-file-logger.heartbeat
+    command: ["python3", "src/alert_router.py", "--config", "/data/config/docker.json"]
+    depends_on:
+      - mqtt-broker
+    profiles:
+      - primary
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys; from src.utils import heartbeat; sys.exit(0 if heartbeat.check(os.environ.get('HEARTBEAT_FILE', '/data/logs/ops/alert-file-logger.heartbeat'), max_age=150) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # HTTP Gateway - REST API + session-auth web UI (dashboard/logs/admin),
+  # served by gunicorn (docs/OVERHAUL_PLAN.md section 4.9): 1 worker x 8
+  # gthread threads. --worker-class gthread is passed explicitly to
+  # document intent (gunicorn actually auto-upgrades "sync" -> gthread
+  # whenever --threads > 1 is set, so this flag is not load-bearing on its
+  # own -- confirmed against gunicorn/config.py's Config.worker_class).
+  # --bind 0.0.0.0:8080 IS required: gunicorn's own default bind
+  # (127.0.0.1:8000) would be unreachable from both the healthcheck below
+  # and nginx-proxy on the WebApps network once the host port publish is
+  # removed (see VIRTUAL_PORT below).
+  http-gateway:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-http-gateway
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/certs:/data/certs:ro         # Certs read-only
+      - ./data/logs:/data/logs:ro           # All logs read-only for viewer
+      - ./data/logs/ops:/data/logs/ops:rw   # Own operational logs writable
+      - ./docs:/data/docs:ro
+      - ./src/static:/app/src/static:ro
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+      # Log viewer configuration
+      - LOG_POLL_INTERVAL_MS=10000  # Poll interval in milliseconds (default: 10s for production)
+      # PostgreSQL (gateway/db.py connection pool + UserStore -- hard
+      # dependency, unlike alert-router's fail-open email-log writer)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=alertmanager
+      - POSTGRES_USER=alertmanager
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_POOL_SIZE=5
+      - POSTGRES_MAX_OVERFLOW=10
+      # Session cookie signing key (gateway/config.py fails fast at startup
+      # if unset/too short) -- generate with: openssl rand -hex 32
+      - GATEWAY_SECRET_KEY=${GATEWAY_SECRET_KEY}
+      # nginx-proxy configuration
+      - VIRTUAL_HOST=alert.d-t.pw
+      - VIRTUAL_PORT=8080
+      - LETSENCRYPT_HOST=alert.d-t.pw
+      - LETSENCRYPT_EMAIL=alerts@yourdomain.com  # UPDATE THIS
+    command: ["gunicorn", "--chdir", "/app/src", "--worker-class", "gthread", "--workers", "1", "--threads", "8", "--timeout", "60", "--bind", "0.0.0.0:8080", "gateway.wsgi:app"]
+    depends_on:
+      alert-router:
+        condition: service_started
+      mqtt-broker:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    profiles:
+      - primary
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Syslog Gateway - UDP syslog receiver to MQTT forwarder
+  # DEPRECATED: Syslog support has been deprecated in favor of MQTT and HTTP.
+  # This service is disabled by default and will not start unless explicitly enabled.
+  # Code is preserved for reference but is no longer maintained.
+  # Use MQTT (port 42690) or HTTP (port 8080) for new integrations.
+  syslog-gateway:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-syslog-gateway
+    restart: "no"  # Changed from unless-stopped - will not auto-restart
+    user: "0:0"  # Run as root
+    ports:
+      - "51514:51514/udp"  # Expose syslog UDP endpoint (high port for external access)
+    volumes:
+      - ./data/config:/data/config:ro
+      - ./data/certs:/data/certs:ro
+      - ./data/logs/ops:/data/logs/ops:rw   # Operational logs only
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - SYSLOG_PORT=51514
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+    command: ["python3", "src/syslog_gateway.py"]
+    depends_on:
+      - alert-router
+      - mqtt-broker
+    profiles:
+      - deprecated  # Changed from 'syslog' to indicate deprecated status
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # SNMP Gateway - SNMPv3 trap receiver to MQTT forwarder
+  # DEPRECATED as of v2.0.2: HTTPS (POST /alert) is the sole supported alert-
+  # ingestion path. Built speculatively for SNMP-trap-only network hardware;
+  # no such device was ever connected in production. This service is
+  # disabled by default and will not start unless explicitly enabled. Code
+  # is preserved for reference but is no longer maintained.
+  snmp-gateway:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-snmp-gateway
+    restart: "no"  # Changed from unless-stopped - will not auto-restart
+    user: "0:0"  # Run as root
+    ports:
+      - "162:162/udp"  # SNMP trap port
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/certs:/data/certs:ro         # Certs read-only
+      - ./data/logs/ops:/data/logs/ops:rw   # Operational logs
+      - ./data/logs/snmp-discovery:/data/logs/snmp-discovery:rw  # Discovery logs
+      - ./data/mibs:/data/mibs:ro           # Vendor MIB files
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+    command: ["python3", "src/snmp_gateway.py"]
+    depends_on:
+      - alert-router
+      - mqtt-broker
+    profiles:
+      - deprecated  # Changed from 'secondary' to indicate deprecated status
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Feed Aggregator - fetches RSS/API feeds and publishes to alerts/input
+  feed-aggregator:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-feed-aggregator
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/logs/ops:/data/logs/ops:rw   # Operational logs only
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_PORT=1883
+      - MQTT_USE_TLS=false
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+      - API_NINJAS_KEY=/O4RGGCoHOIjK4vspbWNhA==wYHBrZMyPRkwrw6x  # API key for facts/trivia
+    command: ["python3", "src/feed_aggregator.py", "--config", "/data/config/docker.json"]
+    depends_on:
+      - alert-router
+      - mqtt-broker
+    profiles:
+      - secondary
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Analytics Engine - scheduled log analysis and email reporting
+  analytics-engine:
+    image: alert-router:latest  # Reuse same image, different command
+    container_name: alert-analytics-engine
+    restart: unless-stopped
+    user: "0:0"  # Run as root
+    volumes:
+      - ./data/config:/data/config:ro       # Config read-only
+      - ./data/logs:/data/logs:ro           # All logs read-only for analysis
+      - ./data/logs/ops:/data/logs/ops:rw   # Own operational logs writable
+    environment:
+      - LOG_LEVEL=INFO
+      - TZ=America/Edmonton
+      - HEARTBEAT_FILE=/data/logs/ops/analytics-engine.heartbeat
+      # PostgreSQL Database (for database-backed analytics)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=alertmanager
+      - POSTGRES_USER=alertmanager
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_POOL_SIZE=5
+      - POSTGRES_MAX_OVERFLOW=10
+      # O365 Graph API configuration (from .env file)
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-}
+      - O365_TENANT_ID=${O365_TENANT_ID:-}
+      - O365_CLIENT_ID=${O365_CLIENT_ID:-}
+      - O365_CLIENT_SECRET=${O365_CLIENT_SECRET:-}
+    command: ["python3", "src/analytics_engine.py", "--config", "/data/config/docker.json"]
+    depends_on:
+      - alert-router
+    profiles:
+      - analytics
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys; from src.utils import heartbeat; sys.exit(0 if heartbeat.check(os.environ.get('HEARTBEAT_FILE', '/data/logs/ops/analytics-engine.heartbeat'), max_age=150) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Usage:
+# docker-compose up -d                                # Core services (mqtt-broker, postgres, database-logger, alert-router)
+# docker-compose --profile primary up -d              # Primary services (http-gateway + file-logger)
+# docker-compose --profile analytics up -d            # Analytics services (analytics-engine)
+# docker-compose --profile secondary up -d            # Secondary services (feed-aggregator + snmp-gateway)
+# docker-compose --profile primary,analytics up -d    # Primary + analytics (most common deployment)
+# docker-compose --profile primary,analytics,secondary up -d  # All active services
+#
+# Profile breakdown:
+# - primary: HTTP gateway with log viewer, file logging
+# - analytics: Analytics engine (scheduled log analysis + email reporting)
+# - secondary: Feed aggregator, SNMP gateway
+#
+# Note: PostgreSQL and database-logger are core (default profile) - Postgres
+# is now a core dependency for the whole system, not analytics-only.
+#
+# Note: Email functionality is built into alert-router via email pathways (no separate profile needed)
+# Note: Syslog gateway is deprecated and moved to --profile deprecated

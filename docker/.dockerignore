@@ -1,0 +1,51 @@
+# Docker ignore file for Alert Router
+
+# Development files
+.git/
+.gitignore
+*.md
+LICENSE
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data directories (will be volume mounted)
+data/
+
+# Test files
+tests/
+scripts/
+
+# Docker files we don't need in the image
+docker/
+
+# Documentation
+docs/
+
+# Temporary files
+*.tmp
+*.temp

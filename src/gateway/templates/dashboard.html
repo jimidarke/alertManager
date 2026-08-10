@@ -1,0 +1,137 @@
+<!--
+  Alert Manager - dashboard page (Task 25)
+
+  Extends layout.html (Task 24): fills `extra_head` (dashboard.css),
+  `content` (this page's markup), and `extra_scripts` (dashboard.js, loaded
+  after common.js since it depends on `window.AlertManagerCommon` --
+  layout.html's own <script> ordering, common.js in the body then this
+  block appended after, guarantees that load order).
+
+  This template is deliberately data-free: every number/row on the page is
+  populated by src/static/js/dashboard.js from
+  GET /api/dashboard/summary and GET /api/dashboard/critical (Task 22) --
+  the ONLY server-supplied piece of state here is `db_ok`
+  (gateway/dashboard/routes.py's `view_dashboard()`, a cheap `SELECT 1`
+  probe used only to pick the initial HTTP status code and whether to
+  render the banner below on first paint; see that view's own docstring
+  for why this is independent of, not a hand-off to, the client-side
+  503-handling `dashboard.js` does for its own fetch() calls).
+
+  Every element ID below is a public contract with dashboard.js -- if you
+  rename one here, update the matching `document.getElementById(...)`/
+  `querySelector(...)` call there too.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Dashboard{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard" id="dashboard-root">
+  <div class="dashboard-header">
+    <h1>Dashboard</h1>
+    <div class="dashboard-controls">
+      <div class="dashboard-control-group">
+        <label for="dashboard-window-select">Timeframe</label>
+        <!-- All 8 values of the server's window enum
+             (gateway/dashboard/routes.py's `_WINDOW_SECONDS`) -- keep this
+             list in sync with that dict if it ever changes. Default 24h,
+             overridden by dashboard.js on load from
+             localStorage['dashboard_window'] when a valid saved value
+             exists. -->
+        <select id="dashboard-window-select">
+          <option value="1h">Last hour</option>
+          <option value="6h">Last 6 hours</option>
+          <option value="12h">Last 12 hours</option>
+          <option value="24h" selected>Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="14d">Last 14 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="all">All (90 days)</option>
+        </select>
+      </div>
+      <span class="dashboard-updated tiny" id="dashboard-updated"></span>
+    </div>
+  </div>
+
+  {% if not db_ok %}
+  <div class="flash flash-warning" id="dashboard-db-banner" role="alert">
+    Dashboard data is temporarily unavailable (database connection down). Try refreshing shortly.
+  </div>
+  {% endif %}
+
+  <!-- Client-side error banner (503s / failed fetches from dashboard.js
+       itself, after the page has already loaded) -- hidden by default,
+       toggled via the `hidden` attribute, never removed from the DOM. -->
+  <div class="flash flash-warning" id="dashboard-error-banner" role="alert" hidden></div>
+
+  <!-- 5 cards, critical->debug order, populated by dashboard.js. -->
+  <div class="card-grid" id="dashboard-cards" aria-live="polite"></div>
+
+  <section class="dashboard-critical" id="dashboard-critical-section">
+    <h2>Critical Alerts</h2>
+
+    <div class="empty-state" id="dashboard-empty-state" hidden>
+      No critical alerts in the selected timeframe
+    </div>
+
+    <div class="dashboard-table-wrap" id="dashboard-table-wrap">
+      <table id="dashboard-critical-table">
+        <thead>
+          <tr>
+            <th class="col-time">Time</th>
+            <th class="col-client">Client</th>
+            <th class="col-source">Source</th>
+            <th>Alert</th>
+          </tr>
+        </thead>
+        <tbody id="dashboard-critical-tbody"></tbody>
+      </table>
+    </div>
+
+    <button type="button" class="btn btn-secondary dashboard-load-more" id="dashboard-load-more" hidden>
+      Load more
+    </button>
+  </section>
+
+  <!-- Row-detail modal: native <dialog>, structure only -- dashboard.js
+       populates every field on row click and calls showModal()/close(). -->
+  <dialog class="modal" id="dashboard-alert-modal">
+    <div class="modal-header">
+      <h2 id="dashboard-modal-title">Alert detail</h2>
+      <button type="button" class="modal-close" id="dashboard-modal-close" aria-label="Close">&times;</button>
+    </div>
+
+    <span class="badge badge-critical" id="dashboard-modal-level-badge">Critical</span>
+
+    <dl class="definition-grid" id="dashboard-modal-fields">
+      <dt>ID</dt><dd id="dashboard-modal-field-id"></dd>
+      <dt>Timestamp (epoch)</dt><dd id="dashboard-modal-field-timestamp"></dd>
+      <dt>Category</dt><dd id="dashboard-modal-field-category"></dd>
+      <dt>Source</dt><dd id="dashboard-modal-field-source"></dd>
+      <dt>Client</dt><dd id="dashboard-modal-field-client"></dd>
+      <dt>Ingestion source</dt><dd id="dashboard-modal-field-ingestion-source"></dd>
+    </dl>
+
+    <h3>Message</h3>
+    <pre class="modal-message" id="dashboard-modal-message"></pre>
+
+    <h3>Metadata</h3>
+    <table class="modal-metadata-table" id="dashboard-modal-metadata-table">
+      <tbody id="dashboard-modal-metadata-tbody"></tbody>
+    </table>
+
+    <details class="modal-raw-json">
+      <summary>Raw JSON</summary>
+      <pre id="dashboard-modal-raw-json"></pre>
+    </details>
+  </dialog>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,331 @@
+{
+  "mqtt": {
+    "broker": "mqtt-broker",
+    "port": 1883,
+    "use_tls": false,
+    "input_topic": "alerts/input",
+    "status_topic": "alerts/service/status"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "/data/logs/ops/alert-router.{date}.log",
+    "console": true
+  },
+  "snmp": {
+    "enabled": true,
+    "port": 162,
+    "bind_address": "0.0.0.0",
+    "logging": {
+      "level": "INFO",
+      "file": "/data/logs/ops/alert-snmp-gateway.{date}.log"
+    },
+    "discovery_mode": {
+      "enabled": true,
+      "log_path": "/data/logs/snmp-discovery/snmpFULL.{date}.jsonl",
+      "accept_all_traps": true,
+      "log_all_varbinds": true,
+      "forward_to_mqtt": false,
+      "duration_days": 7
+    },
+    "mib_translation": {
+      "enabled": true,
+      "mib_paths": [
+        "/usr/share/snmp/mibs",
+        "/data/mibs/vendor"
+      ],
+      "load_modules": [
+        "SNMPv2-MIB",
+        "IF-MIB",
+        "HOST-RESOURCES-MIB",
+        "UCD-SNMP-MIB"
+      ]
+    },
+    "users_file": "/data/config/snmp-gateway/users.json",
+    "oid_mappings": [
+      {
+        "trap_oid": "1.3.6.1.6.3.1.1.5.1",
+        "trap_name": "coldStart",
+        "level": "notice",
+        "category": "system",
+        "title_template": "Device Restarted",
+        "message_template": "Device {hostname} has been restarted (cold start)"
+      },
+      {
+        "trap_oid": "1.3.6.1.6.3.1.1.5.2",
+        "trap_name": "warmStart",
+        "level": "notice",
+        "category": "system",
+        "title_template": "SNMP Agent Restarted",
+        "message_template": "SNMP agent on {hostname} has been restarted (warm start)"
+      },
+      {
+        "trap_oid": "1.3.6.1.6.3.1.1.5.3",
+        "trap_name": "linkDown",
+        "level": "warning",
+        "category": "network",
+        "title_template": "Network Link Down",
+        "message_template": "Interface {IF-MIB::ifDescr} (index {IF-MIB::ifIndex}) is down on {hostname}"
+      },
+      {
+        "trap_oid": "1.3.6.1.6.3.1.1.5.4",
+        "trap_name": "linkUp",
+        "level": "notice",
+        "category": "network",
+        "title_template": "Network Link Up",
+        "message_template": "Interface {IF-MIB::ifDescr} is now up on {hostname}"
+      },
+      {
+        "trap_oid": "1.3.6.1.6.3.1.1.5.5",
+        "trap_name": "authenticationFailure",
+        "level": "warning",
+        "category": "security",
+        "title_template": "SNMP Authentication Failure",
+        "message_template": "SNMP authentication failed on {hostname}"
+      }
+    ],
+    "threshold_rules": [
+      {
+        "varbind_oid": "1.3.6.1.4.1.2021.11.9.0",
+        "varbind_name": "UCD-SNMP-MIB::ssCpuIdle",
+        "metric_name": "cpu_idle_percent",
+        "thresholds": {
+          "critical": {"operator": "<", "value": 10},
+          "warning": {"operator": "<", "value": 20}
+        },
+        "category": "system",
+        "title_template": "High CPU Usage",
+        "message_template": "CPU idle at {value}% on {hostname}"
+      },
+      {
+        "varbind_oid": "1.3.6.1.4.1.2021.10.1.3.1",
+        "varbind_name": "UCD-SNMP-MIB::laLoad.1",
+        "metric_name": "load_average_1min",
+        "thresholds": {
+          "critical": {"operator": ">", "value": 4.0},
+          "warning": {"operator": ">", "value": 2.0}
+        },
+        "category": "system",
+        "title_template": "High Load Average",
+        "message_template": "1-minute load average is {value} on {hostname}"
+      }
+    ],
+    "defaults": {
+      "level": "info",
+      "category": "system",
+      "title_template": "SNMP Trap from {hostname}",
+      "message_template": "Trap OID: {trap_oid} ({trap_oid_symbolic})"
+    }
+  },
+  "feed_aggregator": {
+    "enabled": true,
+    "mqtt": {
+      "broker": "mqtt-broker",
+      "port": 1883,
+      "topic": "alerts/input"
+    },
+    "client_name": "feed",
+    "feeds": {
+      "news": {
+        "enabled": true,
+        "interval_minutes": 30,
+        "source": "feed-aggregator/rss-news",
+        "rss_url": "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "num_items": 5,
+        "category": "news",
+        "level": "info"
+      },
+      "jokes": {
+        "enabled": true,
+        "interval_minutes": 120,
+        "source": "feed-aggregator/joke-api",
+        "api_url": "https://v2.jokeapi.dev/joke/Any?type=single",
+        "num_items": 5,
+        "category": "personal",
+        "level": "info"
+      },
+      "facts": {
+        "enabled": true,
+        "interval_minutes": 60,
+        "source": "feed-aggregator/fact-api",
+        "api_url": "https://api.api-ninjas.com/v1/facts",
+        "api_key_env": "API_NINJAS_KEY",
+        "request_delay_seconds": 2,
+        "num_items": 5,
+        "category": "news",
+        "level": "info"
+      },
+      "trivia": {
+        "enabled": true,
+        "interval_minutes": 240,
+        "source": "feed-aggregator/trivia-api",
+        "api_url": "https://api.api-ninjas.com/v1/trivia",
+        "api_key_env": "API_NINJAS_KEY",
+        "categories": [
+          "sciencenature",
+          "general",
+          "fooddrink",
+          "geography",
+          "entertainment",
+          "toysgames",
+          "music",
+          "mathematics"
+        ],
+        "category": "personal",
+        "level": "info"
+      }
+    }
+  },
+  "pathways": {
+    "console_alerts": {
+      "type": "console",
+      "enabled": true,
+      "format": "{timestamp} [{level}] {title} - {message}",
+      "prefix": "ALERT:"
+    },
+    "file_log": {
+      "type": "file",
+      "enabled": true,
+      "path": "/data/logs/file/{date}.log",
+      "format": "{timestamp} [{level}] [{category}] {source} [{client}]: {title} - {message}",
+      "create_directories": true,
+      "append_mode": true,
+      "per_client_files": true,
+      "client_path_template": "/data/logs/file/{client}/{date}.log",
+      "rotation_period": "weekly"
+    },
+    "led_sign": {
+      "type": "led_sign",
+      "enabled": true,
+      "broker": "mqtt-broker",
+      "port": 1883,
+      "use_tls": false,
+      "base_topic": "ledSign/{zone}/",
+      "default_zone": "main",
+      "zones": {
+        "main": {
+          "enabled": true,
+          "format": "[{level}] {title}: {message}",
+          "max_message_length": 200
+        }
+      }
+    },
+    "email_critical": {
+      "type": "email",
+      "enabled": true,
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["admin@yourdomain.com"],
+      "subject_template": "CRITICAL ALERT: {title}",
+      "html_format": true,
+      "level_filter": ["critical"],
+      "storm_prevention": {
+        "enabled": true,
+        "window_seconds": 10,
+        "levels": ["critical"],
+        "aggregated_template": "emails/aggregated_alerts.html.j2"
+      }
+    },
+    "email_revysmc_critical": {
+      "type": "email",
+      "enabled": true,
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["ops@yourdomain.com", "admin@yourdomain.com"],
+      "subject_template": "🚨 REVYSMC Operations Alert: {title}",
+      "html_format": true,
+      "template_file": "emails/revysmc_critical.html.j2",
+      "level_filter": ["critical"],
+      "client_filter": ["revysmc"],
+      "storm_prevention": {
+        "enabled": true,
+        "window_seconds": 10,
+        "levels": ["critical"],
+        "aggregated_template": "emails/revysmc_aggregated.html.j2"
+      }
+    }
+  },
+  "analytics": {
+    "enabled": true,
+    "run_on_startup": false,
+    "logging": {
+      "level": "INFO",
+      "file": "/data/logs/ops/analytics-engine.{date}.log"
+    },
+    "email": {
+      "enabled": true,
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["admin@yourdomain.com"],
+      "subject_template": "Analytics Report",
+      "html_format": true
+    },
+    "analyzers": {
+      "acme-barcode-not-found": {
+        "enabled": true,
+        "type": "barcode_not_found",
+        "client": "acme-co",
+        "query_definition": "barcode_not_found.json",
+        "log_path_pattern": "/data/logs/file/acme-co/{date}.log",
+        "rotation_period": "weekly",
+        "analysis_period_days": 1,
+        "skip_if_no_results": true,
+        "schedule": {
+          "frequency": "daily",
+          "time": "18:00",
+          "timezone": "America/Edmonton"
+        },
+        "email_recipients": ["admin@yourdomain.com", "reports@example.com"],
+        "email_subject": "Daily Barcode Lookup Failure Report - Acme Co"
+      }
+    }
+  },
+  "routing_rules": [
+    {
+      "name": "Feed Updates to LED and File",
+      "conditions": {
+        "client": ["feed"]
+      },
+      "pathways": ["led_sign", "file_log"]
+    },
+    {
+      "name": "REVYSMC Critical Alerts",
+      "conditions": {
+        "level": ["critical"],
+        "client": ["revysmc"]
+      },
+      "pathways": ["led_sign", "console_alerts", "file_log", "email_revysmc_critical"]
+    },
+    {
+      "name": "All Critical Alerts",
+      "conditions": {
+        "level": ["critical"]
+      },
+      "pathways": ["led_sign", "console_alerts", "file_log", "email_critical"]
+    },
+    {
+      "name": "Warning Alerts",
+      "conditions": {
+        "level": ["warning"]
+      },
+      "pathways": ["console_alerts", "file_log"]
+    },
+    {
+      "name": "Notice Alerts",
+      "conditions": {
+        "level": ["notice"]
+      },
+      "pathways": ["console_alerts", "file_log"]
+    },
+    {
+      "name": "Info Alerts",
+      "conditions": {
+        "level": ["info"]
+      },
+      "pathways": ["file_log"]
+    },
+    {
+      "name": "Debug Alerts",
+      "conditions": {
+        "level": ["debug"]
+      },
+      "pathways": ["file_log"]
+    }
+  ]
+}

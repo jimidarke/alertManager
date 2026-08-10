@@ -1,0 +1,65 @@
+{
+  "_comment": "Example: Creating a custom analyzer with custom template and query definition",
+  "_description": "Demonstrates creating a completely custom analyzer for a different use case",
+
+  "analytics": {
+    "enabled": true,
+    "email": {
+      "enabled": true,
+      "from_address": "alerts@company.com",
+      "html_format": true
+    },
+    "analyzers": {
+      "http-error-tracking": {
+        "_comment": "Custom analyzer for HTTP 500 errors",
+        "enabled": true,
+        "type": "http_error_tracker",
+        "client": "webapp",
+        "query_definition": "http_errors.json",
+        "log_path_pattern": "/data/logs/file/webapp/{date}.log",
+        "rotation_period": "daily",
+        "analysis_period_days": 1,
+        "schedule": {
+          "frequency": "daily",
+          "time": "00:30"
+        },
+        "email_recipients": ["devops@company.com"],
+        "email_subject": "Daily HTTP Error Report"
+      },
+
+      "security-auth-failures": {
+        "_comment": "Track authentication failures for security monitoring",
+        "enabled": true,
+        "type": "auth_failure_tracker",
+        "client": "security",
+        "query_definition": "auth_failures.json",
+        "log_path_pattern": "/data/logs/ops/alert-http-gateway.{date}.log",
+        "rotation_period": "daily",
+        "analysis_period_days": 1,
+        "schedule": {
+          "frequency": "daily",
+          "time": "06:00"
+        },
+        "email_recipients": ["security@company.com"],
+        "email_subject": "Daily Authentication Failure Report"
+      },
+
+      "snmp-trap-summary": {
+        "_comment": "Daily summary of SNMP traps received",
+        "enabled": true,
+        "type": "snmp_trap_summary",
+        "client": "network",
+        "query_definition": "snmp_traps.json",
+        "log_path_pattern": "/data/logs/snmp-discovery/snmpFULL.{date}.jsonl",
+        "rotation_period": "daily",
+        "analysis_period_days": 1,
+        "schedule": {
+          "frequency": "daily",
+          "time": "07:00"
+        },
+        "email_recipients": ["network-ops@company.com"],
+        "email_subject": "Daily SNMP Trap Summary"
+      }
+    }
+  }
+}

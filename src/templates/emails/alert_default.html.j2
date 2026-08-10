@@ -1,0 +1,120 @@
+{% import "emails/components/alert_macros.html.j2" as macros %}
+{%- set lv = (level or 'info')|lower -%}
+{%- set c = macros.LEVEL_COLORS.get(lv, macros.LEVEL_COLORS['info']) -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>{{ title|default('Alert Notification') }}</title>
+    <!--[if mso]>
+    <style type="text/css">
+        body, table, td { font-family: Arial, sans-serif !important; }
+    </style>
+    <![endif]-->
+    <style>
+    {{ macros.dark_mode_css() }}
+    </style>
+</head>
+<body class="em-bg" style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: Arial, Verdana, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">
+    <!-- Wrapper Table -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-bg" style="background-color: #f5f5f5; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                <!-- Main Container -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="em-container em-level-border-{{ lv }}" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; border-top: 4px solid {{ c.light_fg }}; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                    <!-- Header: wordmark + client pill -->
+                    <tr>
+                        <td style="padding: 20px 30px 0 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td style="vertical-align: middle;">
+                                        <span class="em-wordmark-primary" style="font-size: 16px; font-weight: 700; color: #007acc;">ALERT</span><span class="em-wordmark-secondary em-text" style="font-size: 16px; font-weight: 400; color: #333333;"> MANAGER</span>
+                                    </td>
+                                    <td style="vertical-align: middle; text-align: right;">
+                                        {{ macros.client_banner(client=client) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Level / Category / Source chips -->
+                    <tr>
+                        <td style="padding: 16px 30px 0 30px;">
+                            {{ macros.level_badge(level) }}
+                            {{ macros.chip('Category', category|default('')|title) }}
+                            {{ macros.chip('Source', source) }}
+                        </td>
+                    </tr>
+
+                    <!-- Title -->
+                    <tr>
+                        <td style="padding: 18px 30px 10px 30px;">
+                            <h1 class="em-title" style="margin: 0; font-size: 20px; font-weight: 600; color: #333333; line-height: 1.3;">{{ title|default('Alert Notification') }}</h1>
+                        </td>
+                    </tr>
+
+                    <!-- Message (full multiline content preserved, unlike the file pathway's sanitized single-line output) -->
+                    <tr>
+                        <td style="padding: 0 30px 20px 30px;">
+                            <div class="em-text" style="margin: 0; font-size: 14px; color: #333333; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; font-family: Arial, Verdana, Helvetica, sans-serif;">{{ message|default('') }}</div>
+                        </td>
+                    </tr>
+
+                    <!-- Details Card -->
+                    <tr>
+                        <td style="padding: 0 30px 25px 30px;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #f9f9f9; border-radius: 6px; border-left: 3px solid #007acc;">
+                                <tr>
+                                    <td style="padding: 16px 20px;">
+                                        {% set detail_rows = [
+                                            {'label': 'Time (Mountain)', 'value': timestamp|datetime_format('%Y-%m-%d %I:%M:%S %p %Z') if timestamp else 'N/A', 'mono': true},
+                                            {'label': 'Time (Epoch)', 'value': timestamp if timestamp else 'N/A', 'mono': true},
+                                            {'label': 'Source', 'value': source|default('Unknown')},
+                                            {'label': 'Category', 'value': category|default('')|title},
+                                            {'label': 'Client', 'value': client|upper if client else 'N/A'},
+                                            {'label': 'Notified At', 'value': generated_at|datetime_format('%Y-%m-%d %I:%M:%S %p %Z') if generated_at else 'N/A', 'mono': true},
+                                        ] %}
+                                        {{ macros.details_table(detail_rows) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Metadata (omitted entirely when empty) -->
+                    {% if metadata and metadata|length > 0 %}
+                    <tr>
+                        <td style="padding: 0 30px 25px 30px;">
+                            <div class="em-text-secondary" style="font-size: 13px; font-weight: 600; color: #666666; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.3px;">Additional Information</div>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-card" style="background-color: #f9f9f9; border-radius: 6px;">
+                                <tr>
+                                    <td style="padding: 12px 16px;">
+                                        {{ macros.metadata_table(metadata) }}
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Footer -->
+                    <tr>
+                        <td class="em-footer em-hairline" style="padding: 18px 30px; background-color: #f9f9f9; border-top: 1px solid #eeeeee; border-radius: 0 0 8px 8px;">
+                            <div class="em-footer-text" style="text-align: center; font-size: 11px; color: #888888; line-height: 1.6;">
+                                <span style="color: #007acc; font-weight: 700;">Alert Manager</span> v{{ version|default('') }}<br>
+                                Automated notification - do not reply
+                            </div>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

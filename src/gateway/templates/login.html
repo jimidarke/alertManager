@@ -1,0 +1,84 @@
+<!--
+  Alert Manager - login page (Task 24)
+
+  Deliberately does NOT extend layout.html (Jinja's "extends" tag):
+  layout.html's nav assumes an authenticated g.principal (Dashboard/Logs/
+  Admin links, username, a logout POST-form) -- none of which make sense
+  on the one page that exists specifically for an UNauthenticated visitor.
+  Extending it here would mean either hiding every single nav element
+  behind an "if principal" conditional (defeating the point of sharing
+  the layout at all, since nothing would actually render) or showing
+  broken chrome (a "Log out" button with no session to end). A small,
+  standalone, centered-card page is simpler, and matches how most apps
+  visually separate their login screen from the authenticated app shell.
+
+  (Note for anyone editing this comment: this is an HTML comment, but
+  Jinja still parses tag delimiters inside it -- literal curly-brace
+  percent syntax was deliberately avoided above for that reason. Don't
+  reintroduce it here without wrapping it in a raw block.)
+
+  Still shares base.css (the `:root` theme variables plus the
+  `.auth-shell`/`.auth-card`/form/button primitives all live there
+  already) for visual consistency, and the same `csrf_token()` Jinja
+  global (registered by Flask-WTF's `CSRFProtect`, once `csrf.init_app(app)`
+  runs in gateway/__init__.py's `create_app()`) every other form in this
+  app uses -- no `common.js` include: this page has no interactive JS of
+  its own, so there is nothing here for it to do.
+
+  Rendered by gateway/auth/routes.py's `_render_login_page()` (both
+  `GET /login` and a failed `POST /login`), which passes:
+    - next_value: the `next` redirect target, already blanked to "" if it
+      failed `_is_safe_next()` (open-redirect defense -- see that module).
+    - error: `None`, or the exact generic string `/login` uses for every
+      failure cause ("Invalid username or password" -- deliberately
+      identical for "no such user", "wrong password", and "locked out",
+      so this page never reveals which one happened; see
+      gateway/auth/routes.py's own module docstring).
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alert Manager - Login</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+</head>
+<body>
+  <div class="auth-shell">
+    <div class="auth-card">
+      <h1>Alert Manager</h1>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+          {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endwith %}
+
+      {% if error %}
+      <div class="flash flash-error" role="alert">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('auth.login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ next_value or '' }}">
+
+        <div class="form-group">
+          <label for="login-username">Username</label>
+          <input type="text" id="login-username" name="username" autocomplete="username" required autofocus>
+        </div>
+
+        <div class="form-group">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" name="password" autocomplete="current-password" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Log in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

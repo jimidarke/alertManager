@@ -1,0 +1,326 @@
+<!--
+  Alert Manager - admin: create/edit user form (Task 27)
+
+  Extends layout.html (Task 24). Serves BOTH `GET/POST /admin/users/new`
+  (new_user_form/create_user) and `GET/POST /admin/users/<u>/edit`
+  (edit_user_form/update_user) -- gateway/admin/routes.py's shared
+  `_render_user_form()` helper renders this exact template for all four
+  of those call sites (GET new, GET edit, and both routes' 400
+  re-renders), always passing the full context below:
+
+    - mode: the literal string "new" or "edit" -- the ONLY signal this
+      template uses to distinguish the two variants (never inferred from
+      `username` being set/unset).
+    - username: None on a fresh "new" GET; the normalized username string
+      on "edit" (GET or a 400 re-render) and on a "new" 400 re-render (the
+      raw submitted value, so a rejected create doesn't lose what the
+      admin typed). NOT editable -- see the username field block below.
+    - roles: list[dict] from _selectable_roles() (UserStore.list_roles(),
+      PERSONAL_ROLE_PREFIX-filtered) -- each dict has at least
+      `name`/`description`/`is_system`; this template only reads `.name`.
+    - selected_roles: a set[str] of role names to pre-check.
+    - scope_rows: list[(client: str, permissions: list[str])] -- always at
+      least one row (routes.py guarantees `[("", [])]` when there's
+      nothing else to show), grouped in submission/first-seen order.
+    - clients: list[str] from _distinct_clients() (alerts.client UNION
+      role_scopes.client, '*' sentinel excluded) -- the scope-row
+      datalist's suggestion values. Best-effort data (degrades to [] on a
+      DB failure server-side); this template just renders whatever list it
+      gets, empty or not.
+    - allowed_permissions: sorted list[str] -- userstore.ALLOWED_PERMISSIONS,
+      the fixed permission-checkbox set for every scope row.
+    - default_scope_permissions: a set[str] (currently {"logs:read"}) --
+      which permission checkbox(es) a brand-new, still-blank scope row
+      should pre-check. Applied here (and mirrored in the client-side
+      "add scope row" script below) ONLY when a row's client is empty --
+      an existing, already-populated row is never auto-re-checked.
+    - master_admin_role: userstore.MASTER_ADMIN_ROLE ("master_admin") --
+      compared against each role's `.name` to apply the red warning
+      treatment below; never hardcoded as a literal string here.
+    - tokens: list[dict] from UserStore.list_tokens(user_id=...) -- only
+      populated on "edit" (id/name/status/expires_at/last_used_at/
+      created_at/username per row); always [] on "new" (there is no
+      account yet to hold a token). Rendered in the edit-only Tokens
+      fieldset below.
+    - issue_token / token_name: "new"-mode-only echo of the submitted
+      "Issue a Bearer token" checkbox / token name field on a 400
+      re-render (routes.py's create_user() _reject() closure) -- default
+      False / "default" on a fresh GET. Not used in "edit" mode; the
+      edit page's own "issue a new token" mini-form has no checkbox and
+      always starts blank.
+    - error: None, or a message string to show above the form (every
+      validation/guard-rail failure in routes.py re-renders THIS template
+      with the submitted values preserved, status 400 -- see that file's
+      module docstring section 5 for why 400-and-re-render was chosen over
+      flash+redirect).
+
+  Username create-only: on "new" it's a real text input (client-side
+  pattern mirrors routes.py's USERNAME_RE -- server-side validation is,
+  and remains, the actual authority); on "edit" it's rendered as read-only
+  text with no editable form control for it at all -- there is nothing for
+  a submitted edit to even carry (update_user() never reads a submitted
+  username value -- confirmed against routes.py).
+
+  "Default client": only rendered on "new". update_user() (checked in
+  routes.py) never reads a "default_client" form field, so showing an
+  editable-but-actually-inert field on "edit" would be misleading; it's
+  create-only functionality, kept here since create_user() does use it.
+
+  Scope-row field-name contract this form's markup (and its "add scope
+  row" script) must match exactly -- documented in routes.py's
+  `_parse_scope_pairs()`: a repeated `scope_client` field (one value per
+  row, in order) and, per row index N (0-based, same order),
+  `scope_permissions_N` as a repeated checkbox field.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Admin: {{ "New User" if mode == "new" else "Edit User" }}{% endblock %}
+
+{% block content %}
+<div class="admin-user-form">
+  <h1>{% if mode == "new" %}New user{% else %}Edit user: {{ username }}{% endif %}</h1>
+
+  {% if error %}
+  <div class="flash flash-error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <datalist id="clients-datalist">
+    {% for client in clients %}<option value="{{ client }}">{% endfor %}
+  </datalist>
+
+  <form method="post" action="{{ url_for('admin.create_user') if mode == 'new' else url_for('admin.update_user', username=username) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {% if mode == "new" %}
+    <div class="form-group">
+      <label for="user-form-username">Username</label>
+      <input type="text" id="user-form-username" name="username" value="{{ username or '' }}"
+             pattern="^[a-z0-9_-]{3,32}$" minlength="3" maxlength="32"
+             autocomplete="off" autofocus required>
+      <small>3-32 chars: lowercase letters, digits, "-", "_". Cannot be changed later.</small>
+    </div>
+
+    <div class="form-group">
+      <label for="user-form-default-client">Default client <span class="tiny">(optional)</span></label>
+      <input type="text" id="user-form-default-client" name="default_client" list="clients-datalist" autocomplete="off">
+      <small>Inherited by alerts this user submits without an explicit "client" field.</small>
+    </div>
+
+    <div class="form-group">
+      <label class="role-option">
+        <input type="checkbox" id="user-form-service-account" name="service_account">
+        Service account
+      </label>
+      <small>
+        A machine/API account that authenticates via Basic auth or a Bearer
+        token instead of logging in through the browser. Purely a
+        convenience: checking this just pre-fills "Require password change"
+        (off) and "Issue a Bearer token" (on) below -- nothing about it is
+        stored, and both fields stay editable afterward.
+      </small>
+    </div>
+
+    <div class="form-group">
+      <label class="role-option">
+        <input type="checkbox" id="user-form-must-change-password" name="must_change_password" checked>
+        Require password change at next login
+      </label>
+      <small>
+        Applies to browser logins only -- a service account using Basic/Bearer
+        is never prompted. Leave unchecked for machine accounts.
+      </small>
+    </div>
+
+    <div class="form-group">
+      <label class="role-option">
+        <input type="checkbox" id="user-form-issue-token" name="issue_token" {% if issue_token %}checked{% endif %}>
+        Issue a Bearer token
+      </label>
+      <label for="user-form-token-name">Token name</label>
+      <input type="text" id="user-form-token-name" name="token_name" maxlength="255" autocomplete="off"
+             value="{{ token_name or 'default' }}">
+      <small>
+        Shown once, alongside the generated password, right after this
+        account is created. Tokens never expire -- revoke one from this
+        account's edit page if it's no longer needed.
+      </small>
+    </div>
+    {% else %}
+    <div class="form-group">
+      <label>Username</label>
+      <p><strong>{{ username }}</strong> <span class="tiny">(cannot be changed)</span></p>
+    </div>
+    {% endif %}
+
+    <fieldset>
+      <legend>Roles</legend>
+      {% for role in roles %}
+      <label class="role-option{% if role.name == master_admin_role %} role-option-danger{% endif %}">
+        <input type="checkbox" name="roles" value="{{ role.name }}" {% if role.name in selected_roles %}checked{% endif %}>
+        <span>{{ role.name }}</span>
+        {% if role.name == master_admin_role %}
+        <span class="badge badge-admin">Full admin access</span>
+        {% endif %}
+      </label>
+      {% else %}
+      <p class="tiny">No roles defined yet.</p>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset>
+      <legend>Scopes</legend>
+      <div id="scope-rows-container">
+        {% for client, permissions in scope_rows %}
+        {% set row_index = loop.index0 %}
+        <div class="scope-row">
+          <input type="text" name="scope_client" list="clients-datalist" value="{{ client }}" placeholder="client (or * for all)">
+          <div class="tag-group">
+            {% for permission in allowed_permissions %}
+            <label>
+              <input type="checkbox" name="scope_permissions_{{ row_index }}" value="{{ permission }}"
+                {% if permission in permissions %}checked{% elif not client and permission in default_scope_permissions %}checked{% endif %}>
+              {{ permission }}
+            </label>
+            {% endfor %}
+          </div>
+          <button type="button" class="btn btn-secondary scope-row-remove">Remove</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="btn btn-secondary" id="add-scope-row-btn">+ Add another scope</button>
+    </fieldset>
+
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ url_for('admin.list_users') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+
+  {% if mode == "edit" %}
+  <!-- Deliberately OUTSIDE the Save form above: the per-row Revoke button
+       and the "issue new token" mini-form are each their own POST, and
+       nested <form> elements are invalid HTML. -->
+  <section class="admin-user-tokens">
+    <fieldset>
+      <legend>Tokens</legend>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            {% for token in tokens %}
+            <tr>
+              <td>{{ token.name }}</td>
+              <td><span class="status-pill status-{{ 'active' if token.status == 'active' else 'disabled' }}">{{ token.status }}</span></td>
+              <td>
+                <span class="time-relative" data-epoch="{{ token.created_at }}">-</span>
+                <span class="time-absolute" data-epoch="{{ token.created_at }}"></span>
+              </td>
+              <td>
+                {% if token.last_used_at %}
+                <span class="time-relative" data-epoch="{{ token.last_used_at }}">-</span>
+                <span class="time-absolute" data-epoch="{{ token.last_used_at }}"></span>
+                {% else %}
+                <span class="tiny">Never</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if token.status == 'active' %}
+                <form method="post" action="{{ url_for('admin.revoke_token', username=username, token_id=token.id) }}" class="inline-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-secondary">Revoke</button>
+                </form>
+                {% else %}
+                <span class="tiny">-</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5" class="tiny">No tokens yet.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <form method="post" action="{{ url_for('admin.issue_token', username=username) }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="text" name="token_name" value="default" maxlength="255" autocomplete="off" placeholder="token name">
+        <button type="submit" class="btn btn-secondary">Issue new token</button>
+      </form>
+    </fieldset>
+  </section>
+  {% endif %}
+
+  <!-- Blank-row markup for the "add scope row" script below. A real
+       <template> element: inert until cloned, never rendered/submitted as
+       part of the page itself. __ROW_INDEX__ is a plain string token this
+       page's own script replaces -- it is NOT Jinja syntax, so it is safe
+       inside a block Jinja also renders: the permission-checkbox loop
+       just below runs server-side at render time same as everywhere else
+       in this file; __ROW_INDEX__ itself is only ever seen afterward, by
+       the client-side string replace in extra_scripts.
+
+       (Note for anyone editing this comment: this is an HTML comment, but
+       Jinja still parses tag delimiters inside it -- layout.html's own
+       header comment carries the identical warning. Literal curly-brace
+       percent syntax is deliberately avoided above for that reason.) -->
+  <template id="scope-row-template">
+    <div class="scope-row">
+      <input type="text" name="scope_client" list="clients-datalist" placeholder="client (or * for all)">
+      <div class="tag-group">
+        {% for permission in allowed_permissions %}
+        <label>
+          <input type="checkbox" name="scope_permissions___ROW_INDEX__" value="{{ permission }}" {% if permission in default_scope_permissions %}checked{% endif %}>
+          {{ permission }}
+        </label>
+        {% endfor %}
+      </div>
+      <button type="button" class="btn btn-secondary scope-row-remove">Remove</button>
+    </div>
+  </template>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!--
+  "Add another scope row" / "Remove" interaction lives in a real static
+  file (src/static/js/admin-user-form.js), not an inline block, so its
+  renumbering invariant -- keeping each row's scope_permissions_<N>
+  checkbox names contiguous with its position after a removal, which
+  routes.py's _parse_scope_pairs() depends on -- has real node:test
+  regression coverage (tests/js/test_admin_user_form.mjs), matching
+  common.js/dashboard.js's own module.exports-when-under-Node pattern
+  (Tasks 24/25). See that file's own header comment for the exact bug
+  this protects against (found in review: removing a non-last row used
+  to silently reassign/drop other rows' permission grants).
+-->
+<script src="{{ url_for('static', filename='js/admin-user-form.js') }}"></script>
+<script>
+  // Fills in the Tokens table's relative/absolute timestamps -- same
+  // pattern as users_list.html's own last-login script. A no-op on "new"
+  // mode (no .time-relative/.time-absolute elements exist there).
+  (function () {
+    "use strict";
+    var common = window.AlertManagerCommon;
+    if (!common) {
+      return;
+    }
+    var tz = common.getSelectedTimezone();
+    document.querySelectorAll(".time-relative[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.timeAgo(epoch);
+      }
+    });
+    document.querySelectorAll(".time-absolute[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.formatLocalizedTime(epoch, tz);
+      }
+    });
+  })();
+</script>
+{% endblock %}

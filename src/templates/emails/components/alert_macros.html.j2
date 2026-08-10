@@ -1,0 +1,138 @@
+{#
+    Alert Macros - shared Jinja2 components for pathway alert emails
+    (single-alert + aggregated "storm" emails, including the RSC-branded
+    variants). Hand-inlined CSS, table-based layout.
+
+    IMPORTANT: do NOT run premailer over any template that imports this
+    file -- it would strip the @media (prefers-color-scheme: dark) block
+    emitted by dark_mode_css(). This is a different family of templates
+    from base.html.j2/components/{data_table,summary_card,insight_box}
+    (the premailer-inlined analytics-engine report templates); these
+    pathway alert templates stay self-contained <html> documents that
+    extend nothing and get rendered as-is.
+
+    Color sourcing (THEME_SPECIFICATION.md v1.0.1):
+    - light_fg/light_bg: "Email Templates (Light Mode)" > "Email Alert
+      Level Colors (Light Background)" table, verbatim, for
+      critical/warning/notice/info.
+    - dark_fg/dark_bg: "Alert Level Colors" (dark-mode-first UI palette)
+      Foreground/Background Colors tables, verbatim, reused here as the
+      @media (prefers-color-scheme: dark) override values -- the two
+      tables were clearly designed as a light/dark pair (e.g. notice
+      #148f77-on-#e8f8f5 light vs #4ec9b0-on-#1a4d4d dark are the same
+      teal hue at different light/dark balance).
+    - debug's light_fg/light_bg (#487731 / #f4f8f1) are the one
+      exception: THEME_SPECIFICATION.md's light-mode email table only
+      defines critical/warning/notice/info/success, omitting debug.
+      These were derived from the dark-mode debug hue (#6a9955) using
+      the same hue-preserving darken+saturate transform visibly used to
+      derive the other four light pairs from their dark counterparts
+      (see task-11-report.md for the derivation and contrast-ratio
+      check -- ~5.3:1 on white, in line with the other four).
+
+    Non-neutral (saturated) colors are used for every semantic accent
+    (badges, chips, borders) so that clients which apply their own
+    naive auto-dark-mode inversion heuristic to the neutral chrome
+    (white container/gray text) rather than honoring our explicit
+    @media block still render something coherent -- inverted near-white
+    to near-black and vice versa reads as a passable dark theme by
+    itself, while the saturated accents are typically left untouched by
+    those heuristics.
+#}
+
+{% set LEVEL_COLORS = {
+    'critical': {'light_fg': '#c0392b', 'light_bg': '#fdf2f2', 'dark_fg': '#f48771', 'dark_bg': '#5a1a1a'},
+    'warning':  {'light_fg': '#d68910', 'light_bg': '#fef9e7', 'dark_fg': '#dcdcaa', 'dark_bg': '#4d4d1a'},
+    'notice':   {'light_fg': '#148f77', 'light_bg': '#e8f8f5', 'dark_fg': '#4ec9b0', 'dark_bg': '#1a4d4d'},
+    'info':     {'light_fg': '#007acc', 'light_bg': '#f0f7ff', 'dark_fg': '#9cdcfe', 'dark_bg': '#1a3d4d'},
+    'debug':    {'light_fg': '#487731', 'light_bg': '#f4f8f1', 'dark_fg': '#6a9955', 'dark_bg': '#1a3d1a'},
+} %}
+
+{% macro level_color(level) -%}
+{{ LEVEL_COLORS.get((level or 'info')|lower, LEVEL_COLORS['info']) }}
+{%- endmacro %}
+
+{# level_badge(level): the large, prominent alert-level pill (CRITICAL/WARNING/...). #}
+{% macro level_badge(level) %}
+{%- set lv = (level or 'info')|lower -%}
+{%- set c = LEVEL_COLORS.get(lv, LEVEL_COLORS['info']) -%}
+<span class="em-badge em-badge-{{ lv }}" style="display:inline-block; background-color:{{ c.light_bg }}; border:2px solid {{ c.light_fg }}; border-radius:6px; padding:7px 16px; font-family:Arial, Helvetica, sans-serif; font-size:12px; font-weight:700; letter-spacing:0.6px; color:{{ c.light_fg }}; text-transform:uppercase;">{{ lv }}</span>
+{%- endmacro %}
+
+{# chip(label, value): a small neutral "LABEL: value" pill, used for category/source. Renders nothing if value is falsy. #}
+{% macro chip(label, value) %}
+{%- if value -%}
+<span class="em-chip" style="display:inline-block; background-color:#f0f0f0; border:1px solid #dddddd; border-radius:14px; padding:4px 12px; margin:0 6px 6px 0; font-family:Arial, Helvetica, sans-serif; font-size:11px; line-height:1.4;"><span class="em-chip-label" style="color:#888888; font-weight:700; text-transform:uppercase; letter-spacing:0.3px;">{{ label }}</span><span class="em-chip-value" style="color:#333333;"> {{ value }}</span></span>
+{%- endif -%}
+{% endmacro %}
+
+{# client_banner(client, clients): a prominent "CLIENT: X" pill for a single-client alert, or "Multiple clients: a, b" for a batch spanning clients. Renders nothing if neither is set. #}
+{% macro client_banner(client=none, clients=none) %}
+{%- if client -%}
+<span class="em-client-banner" style="display:inline-block; background-color:#1e1e1e; color:#ffffff; border-radius:4px; padding:6px 14px; font-family:Arial, Helvetica, sans-serif; font-size:12px; font-weight:700; letter-spacing:0.6px;">CLIENT: {{ client|upper }}</span>
+{%- elif clients and clients|length > 0 -%}
+<span class="em-client-banner" style="display:inline-block; background-color:#1e1e1e; color:#ffffff; border-radius:4px; padding:6px 14px; font-family:Arial, Helvetica, sans-serif; font-size:12px; font-weight:700;">Multiple clients: {{ clients|join(', ') }}</span>
+{%- endif -%}
+{% endmacro %}
+
+{# details_table(rows): key/value table. rows is a list of {label, value, mono (optional bool)}. #}
+{% macro details_table(rows) %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-details-table">
+{% for row in rows %}
+    <tr>
+        <td class="em-text-secondary" style="width:36%; padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:13px; color:#666666; font-weight:600; vertical-align:top;">{{ row.label }}</td>
+        <td class="em-text" style="padding:6px 0; font-family:{% if row.mono %}'Courier New', Consolas, monospace{% else %}Arial, Helvetica, sans-serif{% endif %}; font-size:13px; color:#333333; vertical-align:top;">{{ row.value }}</td>
+    </tr>
+{% endfor %}
+</table>
+{% endmacro %}
+
+{# metadata_table(metadata): key/value table for the alert's free-form metadata dict. Renders nothing when metadata is empty/absent -- callers may still wrap the call in their own {% if %} to also skip a section heading. #}
+{% macro metadata_table(metadata) %}
+{% if metadata and metadata|length > 0 %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="em-metadata-table">
+{% for key, value in metadata.items() %}
+    <tr>
+        <td class="em-text-secondary" style="width:40%; padding:4px 0; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#666666; vertical-align:top;">{{ key|replace('_', ' ')|title }}</td>
+        <td class="em-text" style="padding:4px 0; font-family:'Courier New', Consolas, monospace; font-size:12px; color:#333333; vertical-align:top;">{{ value }}</td>
+    </tr>
+{% endfor %}
+</table>
+{% endif %}
+{% endmacro %}
+
+{#
+    dark_mode_css(): the full @media (prefers-color-scheme: dark) block
+    (including the @media wrapper) for every class name the other
+    macros/templates in this family emit. Callers embed it verbatim
+    inside their own <head><style>...</style></head>:
+
+        <style>{{ macros.dark_mode_css() }}</style>
+
+    All declarations use !important because inline styles (higher
+    specificity) are what set the light-mode look on every element --
+    only !important can override them from a class selector.
+#}
+{% macro dark_mode_css() -%}
+@media (prefers-color-scheme: dark) {
+  .em-bg { background-color: #1e1e1e !important; }
+  .em-container { background-color: #252526 !important; }
+  .em-text { color: #d4d4d4 !important; }
+  .em-text-secondary { color: #858585 !important; }
+  .em-title { color: #ffffff !important; }
+  .em-footer { background-color: #2d2d2d !important; border-top-color: #555555 !important; }
+  .em-footer-text { color: #858585 !important; }
+  .em-details-card { background-color: #2d2d2d !important; }
+  .em-hairline { border-color: #555555 !important; }
+  .em-row-odd { background-color: #252526 !important; }
+  .em-row-even { background-color: #2d2d2d !important; }
+  .em-chip { background-color: #3c3c3c !important; border-color: #555555 !important; }
+  .em-chip-label { color: #858585 !important; }
+  .em-chip-value { color: #d4d4d4 !important; }
+  .em-wordmark-secondary { color: #d4d4d4 !important; }
+{% for lv, c in LEVEL_COLORS.items() %}
+  .em-badge-{{ lv }} { background-color: {{ c.dark_bg }} !important; border-color: {{ c.dark_fg }} !important; color: {{ c.dark_fg }} !important; }
+  .em-level-border-{{ lv }} { border-color: {{ c.dark_fg }} !important; }
+{% endfor -%}
+}
+{%- endmacro %}

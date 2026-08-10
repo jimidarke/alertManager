@@ -1,0 +1,812 @@
+/**
+ * Alert Manager - Shared Base Stylesheet
+ *
+ * Theme: Dark Mode (Alert Manager Theme Specification v1.0.1,
+ * docs/THEME_SPECIFICATION.md). This is the foundation every
+ * session-authenticated page (layout.html + its children: dashboard.html,
+ * logs.html, admin/*.html) loads. It owns:
+ *   - the `:root` custom-property palette (generalized forward from
+ *     src/static/css/log-viewer.css's own `:root` block -- see below)
+ *   - global reset/typography
+ *   - nav, card, form, table, modal, badge, flash-message primitives
+ *
+ * `log-viewer.css` is untouched by this file (Task 26 trims it down to
+ * viewer-only rules once logs.html adopts base.css alongside it).
+ *
+ * ------------------------------------------------------------------------
+ * Why this isn't a byte-for-byte copy of log-viewer.css's `:root` block
+ * ------------------------------------------------------------------------
+ * log-viewer.css's `:root` is missing two things the theme spec's own
+ * "CSS Variables Reference" defines: `--text-header` (used for H1/section
+ * headers per the Typography > Type Scale table) and the `--spacing-*`
+ * scale (xs/sm/md/lg/xl). Both are added here so every later template can
+ * rely on the *complete* documented variable set, not just the subset one
+ * earlier, narrower-scoped stylesheet happened to need.
+ *
+ * log-viewer.css's `body` rule makes monospace the PAGE-WIDE default font,
+ * because that file exists only to style the log viewer, where the body
+ * *is* log content. base.css is the shell for general app pages (nav,
+ * dashboard cards, admin forms/tables) -- per the theme spec's own Font
+ * Stack section ("Sans-serif (Secondary) - UI Labels, Buttons"), those
+ * surfaces read as a normal web app, not a terminal. So here, sans-serif
+ * is the default `body` font, and monospace is exposed as `--font-mono`
+ * (plus a `.mono` utility class) for the places that still want it
+ * (log/code content, numeric readouts) rather than being forced page-wide.
+ */
+
+/* ============================================
+   CSS Variables - Theme (docs/THEME_SPECIFICATION.md)
+   ============================================ */
+:root {
+    /* Background */
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-tertiary: #2d2d2d;
+    --bg-surface: #3c3c3c;
+
+    /* Text */
+    --text-primary: #d4d4d4;
+    --text-secondary: #858585;
+    --text-title: #ffffff;
+    --text-header: #007acc;
+    --text-value: #4ec9b0;
+
+    /* Accent */
+    --accent-primary: #007acc;
+    --accent-hover: #1a8ad4;
+    --accent-focus: #3794ff;
+
+    /* Border */
+    --border-color: #555555;
+    --border-radius: 4px;
+    --border-radius-lg: 8px;
+
+    /* Alert Levels (foreground / background pairs) */
+    --level-critical: #f48771;
+    --level-critical-bg: #5a1a1a;
+    --level-warning: #dcdcaa;
+    --level-warning-bg: #4d4d1a;
+    --level-notice: #4ec9b0;
+    --level-notice-bg: #1a4d4d;
+    --level-info: #9cdcfe;
+    --level-info-bg: #1a3d4d;
+    --level-debug: #6a9955;
+    --level-debug-bg: #1a3d1a;
+
+    /* Status */
+    --status-success: #0e8a16;
+    --status-error: #d73a49;
+    --status-pending: #dcdcaa;
+
+    /* Links */
+    --link-color: #3794ff;
+    --link-visited: #9e6fff;
+
+    /* Spacing scale */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+
+    /* Transitions */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.2s ease;
+
+    /* Typography */
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+}
+
+/* ============================================
+   Reset + Base
+   ============================================ */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+a:visited {
+    color: var(--link-visited);
+}
+
+.mono {
+    font-family: var(--font-mono);
+}
+
+/* ============================================
+   Typography scale (docs/THEME_SPECIFICATION.md Type Scale table)
+   ============================================ */
+h1 {
+    color: var(--text-header);
+    font-size: 24px;
+    font-weight: 400;
+    line-height: 1.2;
+    margin-bottom: var(--spacing-sm);
+}
+
+h2 {
+    color: var(--text-title);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-bottom: var(--spacing-sm);
+}
+
+h3 {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: var(--spacing-xs);
+}
+
+small, .caption {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.tiny, .version {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/* ============================================
+   Layout shell: nav bar + main content + footer
+   ============================================ */
+.navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    background: var(--bg-secondary);
+    border-bottom: 4px solid var(--accent-primary);
+    padding: var(--spacing-sm) var(--spacing-lg);
+}
+
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.navbar-brand a {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.navbar-wordmark {
+    color: var(--text-title);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.navbar-wordmark .accent {
+    color: var(--accent-primary);
+}
+
+.navbar-links {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex: 1 1 auto;
+}
+
+.nav-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--border-radius);
+    font-size: 14px;
+    transition: background var(--transition-normal), color var(--transition-normal);
+}
+
+.nav-link:visited {
+    color: var(--text-primary);
+}
+
+.nav-link:hover {
+    background: var(--bg-tertiary);
+    text-decoration: none;
+}
+
+.nav-link.active {
+    color: var(--text-title);
+    background: var(--bg-surface);
+    font-weight: 600;
+}
+
+.navbar-user {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.navbar-username {
+    color: var(--text-value);
+    font-weight: 500;
+    font-size: 13px;
+}
+
+.logout-form {
+    display: inline;
+}
+
+/* A POST-form submit button styled to read as a plain nav link, per
+   layout.html's requirement that logout be a real form (CSRF-protected),
+   not a GET link, while still looking like the rest of the nav. */
+.link-button {
+    background: none;
+    border: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: var(--border-radius);
+    transition: background var(--transition-normal), color var(--transition-normal);
+}
+
+.link-button:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    text-decoration: underline;
+}
+
+.page-content {
+    flex: 1 1 auto;
+    padding: var(--spacing-lg);
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.site-footer {
+    text-align: center;
+    padding: var(--spacing-md);
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* ============================================
+   Flash messages
+   ============================================ */
+.flash-messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.flash {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--border-color);
+    font-size: 14px;
+}
+
+.flash-error, .flash-danger {
+    background: var(--level-critical-bg);
+    border-left-color: var(--level-critical);
+    color: var(--level-critical);
+}
+
+.flash-warning {
+    background: var(--level-warning-bg);
+    border-left-color: var(--level-warning);
+    color: var(--level-warning);
+}
+
+.flash-success {
+    background: rgba(14, 138, 22, 0.15);
+    border-left-color: var(--status-success);
+    color: #7fd88a;
+}
+
+.flash-info, .flash-message {
+    background: var(--level-info-bg);
+    border-left-color: var(--level-info);
+    color: var(--level-info);
+}
+
+/* ============================================
+   Cards / panels
+   ============================================ */
+.card {
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    border-left: 4px solid var(--accent-primary);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+.card-title {
+    color: var(--text-title);
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Centered auth-style card (login.html) */
+.auth-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg);
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    border-top: 4px solid var(--accent-primary);
+    padding: var(--spacing-xl) var(--spacing-lg);
+}
+
+.auth-card h1 {
+    text-align: center;
+    margin-bottom: var(--spacing-lg);
+}
+
+/* ============================================
+   Forms
+   ============================================ */
+label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-bottom: var(--spacing-xs);
+}
+
+.form-group {
+    margin-bottom: var(--spacing-md);
+}
+
+input, select, textarea {
+    width: 100%;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: var(--spacing-sm) var(--spacing-sm);
+    border-radius: var(--border-radius);
+    font-family: inherit;
+    font-size: 14px;
+}
+
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.25);
+}
+
+input[type="checkbox"], input[type="radio"] {
+    width: auto;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+button, .btn {
+    display: inline-block;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background var(--transition-normal);
+}
+
+button:hover, .btn:hover {
+    background: #464646;
+}
+
+button:active, .btn:active {
+    background: var(--bg-tertiary);
+}
+
+.btn-primary {
+    background: var(--accent-primary);
+    color: #ffffff;
+    border: none;
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.btn-primary:active {
+    background: #005a9e;
+}
+
+.btn-secondary {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: #464646;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+
+.error, p.error {
+    color: var(--level-critical);
+    font-size: 13px;
+    margin-bottom: var(--spacing-sm);
+}
+
+/* ============================================
+   Tables
+   ============================================ */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    font-size: 13px;
+}
+
+thead th {
+    text-align: left;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+}
+
+tbody td {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* ============================================
+   Badges (role badge, alert-level badges, status pills)
+   ============================================ */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.badge-admin {
+    background: var(--level-critical-bg);
+    color: var(--level-critical);
+}
+
+.badge-user {
+    background: var(--level-info-bg);
+    color: var(--level-info);
+}
+
+.badge-critical { background: var(--level-critical-bg); color: var(--level-critical); }
+.badge-warning  { background: var(--level-warning-bg);  color: var(--level-warning); }
+.badge-notice   { background: var(--level-notice-bg);   color: var(--level-notice); }
+.badge-info     { background: var(--level-info-bg);     color: var(--level-info); }
+.badge-debug    { background: var(--level-debug-bg);    color: var(--level-debug); }
+
+.status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.status-active, .status-connected {
+    background: var(--status-success);
+    color: #ffffff;
+}
+
+.status-disabled, .status-disconnected {
+    background: var(--status-error);
+    color: #ffffff;
+}
+
+.status-pending {
+    background: var(--status-pending);
+    color: var(--bg-primary);
+}
+
+/* ============================================
+   Modals (native <dialog>, used by later dashboard/log-viewer tasks)
+   ============================================ */
+dialog.modal {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: var(--spacing-lg);
+    max-width: 600px;
+    width: 90vw;
+    max-height: 85vh;
+    overflow-y: auto;
+}
+
+dialog.modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 var(--spacing-xs);
+}
+
+.modal-close:hover {
+    color: var(--text-title);
+}
+
+@media (max-width: 768px) {
+    dialog.modal {
+        max-width: 100vw;
+        width: 100vw;
+        height: 100vh;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+}
+
+/* ============================================
+   Page header (title + primary action button) -- admin/*.html, Task 27.
+   dashboard.html has its own richer .dashboard-header (dashboard.css,
+   Task 25, with the timeframe select/updated-indicator this page doesn't
+   need); this is the generic two-item version for any other page.
+   ============================================ */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.page-header h1 {
+    margin-bottom: 0;
+}
+
+/* ============================================
+   Fieldsets/legends -- form grouping (admin/*.html, Task 27)
+
+   Neither element had a rule anywhere in this file; the UA default
+   (a black/grey inset border, black legend text) reads badly against the
+   dark theme's --bg-secondary panels. Task 27's user_form.html is the
+   first template to actually use <fieldset> (Roles / Scopes groups), but
+   this is generic enough for any future form to reuse as-is.
+   ============================================ */
+fieldset {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+legend {
+    padding: 0 var(--spacing-xs);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* ============================================
+   Tag/pill groups -- wraps a row of .badge elements or checkbox <label>s
+   with consistent spacing (admin/*.html role tags, scope-row permission
+   checkboxes, Task 27). .badge alone has no margin, so bare adjacent
+   badges/labels would touch without this.
+   ============================================ */
+.tag-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-xs) var(--spacing-md);
+}
+
+/* ============================================
+   Table horizontal-scroll wrapper (generic; dashboard.css's own
+   #dashboard-table-wrap predates this and is untouched -- this is the
+   same idea generalized into base.css for any other table, starting with
+   admin/users_list.html, Task 27).
+   ============================================ */
+.table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+/* ============================================
+   Row-scoped action forms (admin/users_list.html's per-row Disable/
+   Enable/Reset-password POST-forms, Task 27) -- lays several inline
+   <form>/<a class="btn"> elements out in a row instead of the
+   style="display:inline" the Task 23 stub template used.
+   ============================================ */
+.row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.inline-form {
+    display: inline-flex;
+}
+
+/* ============================================
+   Relative/absolute time stack -- generalized forward from
+   dashboard.css's identical #dashboard-critical-table rule (Task 25) so
+   admin/users_list.html (Task 27) can use the same last-login display
+   convention without loading dashboard.css. Values are intentionally
+   identical to dashboard.css's; not deduplicated across the two files to
+   avoid touching Task 25's own stylesheet for an unrelated task.
+   ============================================ */
+.time-relative {
+    display: block;
+    color: var(--text-primary);
+}
+
+.time-absolute {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+/* ============================================
+   Role checkbox rows (admin/user_form.html, Task 27) -- .role-option-danger
+   is the master_admin role's "unmistakable" red warning treatment the
+   brief calls for, reusing the same --level-critical/--level-critical-bg
+   pair .badge-admin already uses elsewhere in this file rather than
+   introducing a new color.
+   ============================================ */
+.role-option {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--border-radius);
+    margin-bottom: var(--spacing-xs);
+}
+
+.role-option-danger {
+    background: var(--level-critical-bg);
+    border: 1px solid var(--level-critical);
+}
+
+/* ============================================
+   Repeatable scope row (admin/user_form.html, Task 27) -- one row per
+   (client, permissions) pair; client <input list=...> + permission
+   checkboxes + a remove button, laid out in a wrapping flex row.
+   ============================================ */
+.scope-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+}
+
+.scope-row input[type="text"] {
+    flex: 1 1 200px;
+    width: auto;
+}
+
+.scope-row-remove {
+    margin-left: auto;
+}
+
+/* ============================================
+   Password reveal box (admin/password_result.html, Task 27) -- the
+   auto-generated password + its copy-to-clipboard button.
+   ============================================ */
+.password-reveal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-md);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin: var(--spacing-md) 0;
+}
+
+.password-reveal code {
+    font-size: 16px;
+    color: var(--text-value);
+    word-break: break-all;
+}
+
+/* ============================================
+   Scrollbars (WebKit) -- generalized forward from log-viewer.css
+   ============================================ */
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--bg-surface); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-color); }
+
+/* ============================================
+   Responsive
+   ============================================ */
+@media (max-width: 768px) {
+    .navbar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .navbar-links {
+        flex-wrap: wrap;
+    }
+
+    .page-content {
+        padding: var(--spacing-md);
+    }
+}

@@ -1,0 +1,24 @@
+{# Insight Box Component - Light Theme #}
+{#
+   Required:
+   - content: string
+
+   Optional:
+   - title: string
+   - type: info (default), warning, critical, success
+#}
+
+{% set colors = {
+    'info': {'border': '#007acc', 'bg': '#f0f7ff'},
+    'warning': {'border': '#d68910', 'bg': '#fef9e7'},
+    'critical': {'border': '#c0392b', 'bg': '#fdf2f2'},
+    'success': {'border': '#1e8449', 'bg': '#eafaf1'}
+} %}
+{% set style = colors[type|default('info')] %}
+
+<div style="padding: 15px; border-left: 4px solid {{ style.border }}; background-color: {{ style.bg }}; border-radius: 4px; margin: 20px 0;">
+    {% if title %}
+    <div style="font-weight: 600; color: {{ style.border }}; margin-bottom: 6px; font-size: 13px;">{{ title }}</div>
+    {% endif %}
+    <div style="color: #333333; font-size: 13px; line-height: 1.5;">{{ content }}</div>
+</div>

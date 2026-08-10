@@ -1,0 +1,96 @@
+<!--
+  Alert Manager - shared page layout (Task 24)
+
+  Every session-authenticated page (dashboard.html - Task 25, logs.html -
+  Task 26, admin/*.html - Task 27) extends this template (Jinja's "extends"
+  tag) and fills in the "content" block.
+
+  login.html deliberately does NOT extend this file -- see that template's
+  own top-of-file comment for why.
+
+  Nav assumes g.principal is set, which holds for every real caller: every
+  route that renders a layout-extending template is gated behind
+  require_auth/require_master_admin (gateway/principal.py), both of which
+  set g.principal before the view body ever runs. g.get('principal') is
+  used anyway (never a bare g.principal) so this template can also be
+  rendered directly in a test/dev context with no principal at all,
+  without raising -- the nav's user/logout section and the Admin link
+  simply don't render.
+
+  (Note for anyone editing this comment: this is an HTML comment, but
+  Jinja still parses tag delimiters inside it -- literal curly-brace
+  percent syntax was deliberately avoided above for that reason. Don't
+  reintroduce it here without wrapping it in a raw block.)
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Alert Manager{% endblock %}</title>
+  <!-- docs/OVERHAUL_PLAN.md 4.4: "layout embeds token in a meta tag" --
+       read by src/static/js/common.js's getCsrfToken() so page JS (Task
+       25/26/27's fetch()/XHR calls) can attach X-CSRFToken to same-origin
+       POSTs without scraping a form field. -->
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  {% set principal = g.get('principal') %}
+  <header class="navbar">
+    <div class="navbar-brand">
+      <a href="{{ url_for('dashboard.view_dashboard') }}">
+        <span class="navbar-wordmark">Alert<span class="accent">Manager</span></span>
+      </a>
+    </div>
+
+    <nav class="navbar-links">
+      <a href="{{ url_for('dashboard.view_dashboard') }}"
+         class="nav-link{% if request.endpoint == 'dashboard.view_dashboard' %} active{% endif %}">Dashboard</a>
+      <a href="{{ url_for('logs.view_logs') }}"
+         class="nav-link{% if request.endpoint == 'logs.view_logs' %} active{% endif %}">Logs</a>
+      {% if principal and principal.is_master_admin() %}
+      <a href="{{ url_for('admin.list_users') }}"
+         class="nav-link{% if request.endpoint and request.endpoint.startswith('admin.') %} active{% endif %}">Admin</a>
+      {% endif %}
+    </nav>
+
+    {% if principal %}
+    <div class="navbar-user">
+      <span class="navbar-username">{{ principal.username }}</span>
+      {% if principal.is_master_admin() %}
+      <span class="badge badge-admin">Admin</span>
+      {% else %}
+      <span class="badge badge-user">User</span>
+      {% endif %}
+      <form method="post" action="{{ url_for('auth.logout') }}" class="logout-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="link-button">Log out</button>
+      </form>
+    </div>
+    {% endif %}
+  </header>
+
+  <main class="page-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="flash-messages">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <p>Alert Manager v{{ version }}</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

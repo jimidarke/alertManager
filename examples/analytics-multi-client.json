@@ -1,0 +1,69 @@
+{
+  "_comment": "Example: Using the same barcode analyzer for multiple clients",
+  "_description": "This demonstrates how query definitions enable analyzer reusability across clients",
+
+  "analytics": {
+    "enabled": true,
+    "run_on_startup": false,
+    "logging": {
+      "level": "INFO",
+      "file": "/data/logs/ops/analytics-engine.{date}.log"
+    },
+    "email": {
+      "enabled": true,
+      "from_address": "analytics@yourdomain.com",
+      "html_format": true
+    },
+    "analyzers": {
+      "acme-co-barcodes": {
+        "enabled": true,
+        "type": "barcode_not_found",
+        "client": "acme-co",
+        "query_definition": "barcode_not_found.json",
+        "log_path_pattern": "/data/logs/file/acme-co/{date}.log",
+        "rotation_period": "weekly",
+        "analysis_period_days": 7,
+        "schedule": {
+          "frequency": "weekly",
+          "day_of_week": "monday",
+          "time": "09:00"
+        },
+        "email_recipients": ["reports@example.com"],
+        "email_subject": "Weekly Barcode Report - Acme Co"
+      },
+
+      "acme-retail-barcodes": {
+        "enabled": true,
+        "type": "barcode_not_found",
+        "client": "acmeretail",
+        "query_definition": "barcode_not_found.json",
+        "log_path_pattern": "/data/logs/file/acmeretail/{date}.log",
+        "rotation_period": "daily",
+        "analysis_period_days": 7,
+        "schedule": {
+          "frequency": "weekly",
+          "day_of_week": "friday",
+          "time": "17:00"
+        },
+        "email_recipients": ["manager@acmeretail.com", "inventory@acmeretail.com"],
+        "email_subject": "Weekly Barcode Report - Acme Retail"
+      },
+
+      "grocery-store-barcodes": {
+        "enabled": true,
+        "type": "barcode_not_found",
+        "client": "groceryco",
+        "query_definition": "barcode_not_found.json",
+        "log_path_pattern": "/data/logs/file/groceryco/{date}.log",
+        "rotation_period": "weekly",
+        "analysis_period_days": 14,
+        "schedule": {
+          "frequency": "monthly",
+          "time": "08:00"
+        },
+        "email_recipients": ["reports@groceryco.com"],
+        "email_subject": "Monthly Barcode Analysis - GroceryCo"
+      }
+    }
+  }
+}

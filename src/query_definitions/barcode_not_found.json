@@ -1,0 +1,94 @@
+{
+  "query_name": "barcode_not_found",
+  "query_version": "1.0.1",
+  "description": "Identifies failed barcode/UPC lookups in price checker logs",
+  "author": "Alert Manager Analytics",
+
+  "log_pattern_matching": {
+    "message_pattern": "Price check failed",
+    "message_pattern_flags": ["IGNORECASE"],
+    "level_filter": ["warning", "error", "critical"],
+    "category_filter": ["application"],
+    "source_filter": null,
+    "client_filter": null
+  },
+
+  "data_extraction": {
+    "fields": [
+      {
+        "name": "upc",
+        "pattern": "Product not found for UPC=(\\d+)",
+        "type": "string",
+        "required": true,
+        "description": "UPC/barcode that was not found"
+      },
+      {
+        "name": "device",
+        "pattern": "device=([a-f0-9]+)",
+        "type": "string",
+        "required": false,
+        "default": "unknown",
+        "description": "Device ID that attempted the lookup"
+      }
+    ]
+  },
+
+  "aggregation": {
+    "group_by": ["upc"],
+    "metrics": {
+      "count": "Total number of lookup attempts per UPC",
+      "unique_devices": "Number of unique devices that attempted lookup",
+      "first_seen": "Timestamp of first occurrence",
+      "last_seen": "Timestamp of last occurrence"
+    },
+    "sort_by": "count",
+    "sort_order": "desc"
+  },
+
+  "business_rules": {
+    "thresholds": {
+      "attempt_warning": 5,
+      "attempt_critical": 10
+    },
+    "filters": {
+      "min_occurrences": 1,
+      "exclude_test_upcs": []
+    },
+    "insights": {
+      "high_frequency_threshold": 5,
+      "insight_templates": [
+        "Most barcodes were only looked up once.",
+        "Multiple lookup attempts were made for several barcodes.",
+        "On average, each barcode failed {avg_failures:.1f} times, suggesting repeated lookup attempts for missing products."
+      ]
+    }
+  },
+
+  "email_template": {
+    "template_name": "barcode_not_found.html.j2",
+    "report_title": "Barcode Lookup Failure Report",
+    "report_subtitle": null,
+    "color_scheme": {
+      "low_attempts": "#7f8c8d",
+      "medium_attempts": "#e67e22",
+      "high_attempts": "#c0392b"
+    },
+    "table_config": {
+      "max_rows": 100,
+      "columns": [
+        {
+          "header": "UPC Code",
+          "field": "upc",
+          "width": "60%",
+          "style": "font-family: 'Courier New', monospace; font-weight: bold;"
+        },
+        {
+          "header": "Count",
+          "field": "count",
+          "width": "40%",
+          "align": "center"
+        }
+      ]
+    }
+  }
+}

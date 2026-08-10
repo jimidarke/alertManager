@@ -1,0 +1,293 @@
+/**
+ * Alert Manager - Dashboard page stylesheet (Task 25)
+ *
+ * Loaded by templates/dashboard.html's `extra_head` block, after base.css
+ * (layout.html always loads that first). Every color/spacing value here
+ * reuses base.css's `:root` custom properties (docs/THEME_SPECIFICATION.md)
+ * -- no new palette is introduced. Generic chrome this page shares with
+ * the rest of the app (`.flash`/`.flash-warning` banners, `dialog.modal`
+ * + its own <768px full-screen rule, `table`/`thead`/`tbody`, `.badge*`,
+ * `.mono`, `button`/`.btn*`) is intentionally NOT redefined here -- see
+ * base.css for those. This file only adds the dashboard-specific pieces:
+ * the card grid, the critical-card pulse, the critical table's
+ * Time/Client-pill/Alert cell styling, the modal's dashboard-specific
+ * content (definition grid, message, metadata table, raw-JSON <details>),
+ * and the empty-state block.
+ */
+
+/* ============================================
+   Header row: title + timeframe select + "updated Xs ago"
+   ============================================ */
+.dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.dashboard-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.dashboard-control-group {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.dashboard-control-group label {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.dashboard-control-group select {
+    width: auto;
+    min-width: 160px;
+}
+
+.dashboard-updated {
+    white-space: nowrap;
+}
+
+#dashboard-db-banner,
+#dashboard-error-banner {
+    margin-bottom: var(--spacing-md);
+}
+
+/* ============================================
+   Card grid -- exactly 5 cards, critical->debug order
+   ============================================ */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.dashboard-card {
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    border-top: 4px solid var(--border-color);
+    padding: var(--spacing-lg) var(--spacing-md);
+    text-align: center;
+    transition: transform var(--transition-fast);
+}
+
+.dashboard-card[data-level="critical"] { border-top-color: var(--level-critical); cursor: pointer; }
+.dashboard-card[data-level="warning"]  { border-top-color: var(--level-warning); }
+.dashboard-card[data-level="notice"]   { border-top-color: var(--level-notice); }
+.dashboard-card[data-level="info"]     { border-top-color: var(--level-info); }
+.dashboard-card[data-level="debug"]    { border-top-color: var(--level-debug); }
+
+.dashboard-card[data-level="critical"]:hover {
+    transform: translateY(-1px);
+}
+
+.dashboard-card-count {
+    color: var(--text-title);
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.dashboard-card[data-level="critical"] .dashboard-card-count { color: var(--level-critical); }
+.dashboard-card[data-level="warning"]  .dashboard-card-count { color: var(--level-warning); }
+.dashboard-card[data-level="notice"]   .dashboard-card-count { color: var(--level-notice); }
+.dashboard-card[data-level="info"]     .dashboard-card-count { color: var(--level-info); }
+.dashboard-card[data-level="debug"]    .dashboard-card-count { color: var(--level-debug); }
+
+.dashboard-card-label {
+    margin-top: var(--spacing-xs);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Pulse: only ever applied via dashboard.js toggling this class on the
+   critical card, and only while its count is > 0 (see that file's
+   `renderCards`). Never applied through CSS selectors alone -- a count of
+   0 must never pulse, which is why this isn't just `[data-level=critical]`
+   itself. */
+@keyframes dashboard-card-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(244, 135, 113, 0.55); }
+    50%      { box-shadow: 0 0 0 10px rgba(244, 135, 113, 0); }
+}
+
+.dashboard-card.pulse {
+    animation: dashboard-card-pulse 1.6s ease-in-out infinite;
+}
+
+/* ============================================
+   Critical alerts table
+   ============================================ */
+.dashboard-critical h2 {
+    margin-bottom: var(--spacing-md);
+}
+
+.dashboard-table-wrap {
+    overflow-x: auto;
+}
+
+#dashboard-critical-table .col-time   { width: 190px; white-space: nowrap; }
+#dashboard-critical-table .col-client { width: 140px; }
+#dashboard-critical-table .col-source { width: 160px; }
+
+.time-relative {
+    display: block;
+    color: var(--text-primary);
+}
+
+.time-absolute {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.client-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--bg-surface);
+    color: var(--text-value);
+    font-size: 12px;
+}
+
+.client-pill.client-pill-empty {
+    color: var(--text-secondary);
+}
+
+.alert-cell-title {
+    display: block;
+    color: var(--text-title);
+    font-weight: 600;
+}
+
+.alert-cell-message {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+#dashboard-critical-tbody tr {
+    cursor: pointer;
+}
+
+.dashboard-load-more {
+    margin-top: var(--spacing-md);
+}
+
+/* ============================================
+   Empty state
+   ============================================ */
+.empty-state {
+    padding: var(--spacing-xl) var(--spacing-md);
+    text-align: center;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+/* ============================================
+   Modal content (dialog.modal's box/backdrop/full-screen-<768px rule
+   itself lives in base.css -- this only styles what's inside it)
+   ============================================ */
+#dashboard-alert-modal {
+    max-width: 640px;
+}
+
+#dashboard-modal-level-badge {
+    margin-bottom: var(--spacing-md);
+}
+
+.definition-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--spacing-xs) var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.definition-grid dt {
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.definition-grid dd {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    word-break: break-word;
+}
+
+.modal-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.modal-metadata-table {
+    margin-bottom: var(--spacing-md);
+    font-size: 12px;
+}
+
+.modal-metadata-table td {
+    font-family: var(--font-mono);
+    word-break: break-word;
+}
+
+.modal-raw-json {
+    margin-bottom: var(--spacing-sm);
+}
+
+.modal-raw-json summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-bottom: var(--spacing-xs);
+}
+
+.modal-raw-json pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+/* ============================================
+   Responsive (<768px, matches base.css's own dialog.modal breakpoint)
+   ============================================ */
+@media (max-width: 768px) {
+    .dashboard-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .definition-grid {
+        grid-template-columns: 1fr;
+    }
+
+    #dashboard-critical-table .col-source {
+        display: none;
+    }
+}

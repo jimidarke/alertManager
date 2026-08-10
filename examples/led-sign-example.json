@@ -1,0 +1,218 @@
+{
+  "mqtt": {
+    "broker": "alert.d-t.pw",
+    "port": 46942,
+    "use_tls": true,
+    "ca_cert": "./certs/ca.crt",
+    "cert_file": "./certs/client.crt",
+    "key_file": "./certs/client.key",
+    "input_topic": "alerts/input",
+    "status_topic": "alerts/service/status"
+  },
+  "logging": {
+    "level": "INFO",
+    "console": true,
+    "file": "./alerts.log"
+  },
+  "pathways": {
+    "console_alerts": {
+      "type": "console",
+      "enabled": true,
+      "format": "{timestamp} [{level}] {title}: {message}",
+      "prefix": "ALERT:"
+    },
+    "file_log": {
+      "type": "file",
+      "enabled": true,
+      "path": "./alerts.log",
+      "format": "{timestamp} [{level}] [{category}] {source}: {title} - {message}",
+      "create_directories": true,
+      "append_mode": true
+    },
+    "led_signs_multi_zone": {
+      "type": "led_sign",
+      "enabled": true,
+      "broker": "alert.d-t.pw",
+      "port": 46942,
+      "use_tls": true,
+      "ca_cert": "./certs/ca.crt",
+      "cert_file": "./certs/client.crt",
+      "key_file": "./certs/client.key",
+      "base_topic": "ledSign/{zone}/",
+      "default_zone": "kitchen",
+      "zones": {
+        "kitchen": {
+          "enabled": true,
+          "level_filter": ["critical", "warning", "info"],
+          "category_filter": ["security", "system", "automation", "personal"],
+          "format": "{title}: {message}",
+          "max_message_length": 150,
+          "display_overrides": {
+            "position": "midline",
+            "character_set": "7high"
+          }
+        },
+        "living_room": {
+          "enabled": true,
+          "level_filter": ["critical", "warning"],
+          "category_filter": ["security", "weather", "news"],
+          "format": "[{level}] {title}: {message}",
+          "max_message_length": 200,
+          "display_overrides": {
+            "position": "fill",
+            "character_set": "10high"
+          }
+        },
+        "office": {
+          "enabled": true,
+          "level_filter": ["critical", "warning", "info"],
+          "category_filter": ["system", "network", "application"],
+          "format": "{source} - {title}",
+          "max_message_length": 120,
+          "display_overrides": {
+            "speed": 3,
+            "character_set": "7high"
+          }
+        },
+        "garage": {
+          "enabled": true,
+          "level_filter": ["critical"],
+          "category_filter": ["security", "automation"],
+          "format": "ALERT: {message}",
+          "max_message_length": 100,
+          "display_overrides": {
+            "mode": "flash",
+            "color": "red",
+            "speed": 5
+          }
+        }
+      },
+      "effect_mappings": {
+        "critical": {
+          "position": "fill",
+          "mode": "explode",
+          "special_effect": "bomb",
+          "color": "red",
+          "character_set": "10high",
+          "speed": 5,
+          "priority": true,
+          "duration": 90
+        },
+        "warning": {
+          "position": "topline",
+          "mode": "special",
+          "special_effect": "trumpet",
+          "color": "amber",
+          "character_set": "7high",
+          "speed": 4,
+          "priority": false,
+          "duration": 45
+        }
+      },
+      "category_styles": {
+        "security": {
+          "mode": "flash",
+          "special_effect": "starburst",
+          "color": "red",
+          "speed": 5
+        },
+        "weather": {
+          "mode": "scroll",
+          "special_effect": "snow",
+          "color": "autocolor",
+          "speed": 2
+        },
+        "news": {
+          "mode": "special",
+          "special_effect": "newsflash",
+          "color": "yellow",
+          "speed": 3
+        },
+        "personal": {
+          "mode": "rollin",
+          "special_effect": "welcome",
+          "color": "rainbow1",
+          "character_set": "7highfancy",
+          "speed": 2
+        }
+      },
+      "persistence_rules": {
+        "critical_security": {
+          "duration": 120,
+          "priority": true
+        },
+        "warning_weather": {
+          "duration": 60
+        },
+        "info_news": {
+          "duration": 25
+        }
+      }
+    },
+    "email_alerts": {
+      "type": "email",
+      "enabled": false,
+      "method": "graph",
+      "from_address": "alerts@yourdomain.com",
+      "to_addresses": ["admin@yourdomain.com"],
+      "subject_template": "Alert: {title}",
+      "html_format": true
+    }
+  },
+  "routing_rules": [
+    {
+      "name": "Critical Security Alerts",
+      "conditions": {
+        "level": ["critical"],
+        "category": ["security"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone", "email_alerts"]
+    },
+    {
+      "name": "Critical System Alerts", 
+      "conditions": {
+        "level": ["critical"],
+        "category": ["system", "network"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone", "email_alerts"]
+    },
+    {
+      "name": "Warning Weather Alerts",
+      "conditions": {
+        "level": ["warning"],
+        "category": ["weather"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone"]
+    },
+    {
+      "name": "News Alerts",
+      "conditions": {
+        "category": ["news"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone"]
+    },
+    {
+      "name": "Office System Alerts",
+      "conditions": {
+        "level": ["warning", "info"],
+        "category": ["system", "network", "application"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone"]
+    },
+    {
+      "name": "Personal Reminders",
+      "conditions": {
+        "level": ["info"],
+        "category": ["personal", "automation"]
+      },
+      "pathways": ["console_alerts", "file_log", "led_signs_multi_zone"]
+    },
+    {
+      "name": "Debug Alerts",
+      "conditions": {
+        "level": ["debug"]
+      },
+      "pathways": ["file_log"]
+    }
+  ]
+}

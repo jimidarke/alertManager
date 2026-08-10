@@ -1,0 +1,123 @@
+<!--
+  Alert Manager - log viewer page (Task 26)
+
+  Extends layout.html (Task 24): fills `extra_head` (log-viewer.css, loaded
+  after base.css -- see that file's own header comment for why it no longer
+  carries the `:root` theme block or generic form-control rules base.css
+  already provides), `content` (this page's markup), and `extra_scripts`
+  (the `SERVER_POLL_INTERVAL_MS` config constant, then log-viewer.js,
+  loaded after common.js -- layout.html's own <script> ordering guarantees
+  that load order, matching dashboard.html's pattern).
+
+  Ports the filter bar / dropdown / pause button / log container structure
+  of the old inline HTML template in src/http_gateway.py's `view_logs()`
+  (read in full during this task) into real markup here, plus two things
+  that template never had: a search box (net-new, see log-viewer.js's
+  `escapeAndHighlight`) and a backfill-progress readout (net-new, driven by
+  the `/api/logs/chunk` backward-paging loop). The old template's
+  `userInfo`/`opsToggle`/`timezoneSelect` elements were built at RUNTIME by
+  the old log-viewer.js (no static markup existed for them at all -- see
+  this task's own research); here they're real template markup instead,
+  with the ops toggle gated server-side on `principal.is_master_admin()`
+  (layout.html's nav already does the same for its Admin link) rather than
+  client-side on a fetched `user.type` string.
+
+  Every element ID below is a public contract with log-viewer.js -- if you
+  rename one here, update the matching `document.getElementById(...)` call
+  there too.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Logs{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/log-viewer.css') }}">
+{% endblock %}
+
+{% block content %}
+{% set principal = g.get('principal') %}
+<div class="log-viewer" id="log-viewer-root">
+  <div class="log-header">
+    <h1>Logs</h1>
+    <div class="log-controls">
+      <select id="log-file-select" aria-label="Log file">
+        <option value="">Loading...</option>
+      </select>
+      <button type="button" class="btn btn-secondary" id="log-pause-btn">Pause</button>
+      <button type="button" class="btn btn-secondary" id="log-reload-file-btn">Reload File</button>
+      <button type="button" class="btn btn-secondary" id="log-refresh-files-btn">Refresh Files</button>
+      <span class="status connected" id="log-status">Connected</span>
+    </div>
+  </div>
+
+  <div class="flash flash-warning" id="log-access-denied-banner" role="alert" hidden>
+    You do not have permission to view this log file.
+  </div>
+
+  <div class="log-info-bar">
+    <div class="log-info-item">Current Time: <span id="log-current-unix-time">0</span></div>
+    <div class="log-info-item"><span id="log-match-count">0 matches / 0 lines</span></div>
+    <div class="log-info-item">Last Update: <span id="log-last-update">Never</span></div>
+    <div class="log-info-item">Auto-scroll: <span id="log-autoscroll-status">On</span></div>
+    <div class="log-info-item" id="log-backfill-progress">Loading history: 0%</div>
+  </div>
+
+  <div class="log-filter-bar">
+    <span class="filter-label">Filter Levels:</span>
+    <label class="filter-checkbox">
+      <input type="checkbox" id="log-filter-critical" checked>
+      <span class="level-critical">Critical</span>
+    </label>
+    <label class="filter-checkbox">
+      <input type="checkbox" id="log-filter-warning" checked>
+      <span class="level-warning">Warning</span>
+    </label>
+    <label class="filter-checkbox">
+      <input type="checkbox" id="log-filter-notice" checked>
+      <span class="level-notice">Notice</span>
+    </label>
+    <label class="filter-checkbox">
+      <input type="checkbox" id="log-filter-info">
+      <span class="level-info">Info</span>
+    </label>
+    <label class="filter-checkbox">
+      <input type="checkbox" id="log-filter-debug">
+      <span class="level-debug">Debug</span>
+    </label>
+    <button type="button" class="filter-btn" id="log-filter-all-btn">All</button>
+    <button type="button" class="filter-btn" id="log-filter-none-btn">None</button>
+
+    <span class="log-search-group">
+      <input type="search" id="log-search-input" placeholder="Search log text&hellip;" aria-label="Search log text">
+    </span>
+
+    <span class="timezone-selector">
+      <label for="log-timezone-select">Timezone:</label>
+      <select id="log-timezone-select" aria-label="Timezone"></select>
+    </span>
+
+    {% if principal and principal.is_master_admin() %}
+    <label class="ops-toggle" for="log-ops-toggle">
+      <input type="checkbox" id="log-ops-toggle">
+      <span>Show Operational Logs (/ops/)</span>
+    </label>
+    {% endif %}
+  </div>
+
+  <div class="log-container" id="log-container">
+    <div class="no-logs" id="log-no-logs">Waiting for log data&hellip;</div>
+    <div class="log-sentinel" id="log-sentinel"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Configuration injected from server -- mirrors src/http_gateway.py's
+  // `self.poll_interval_ms` (env var `LOG_POLL_INTERVAL_MS`, default
+  // 10000ms), now sourced from gateway/config.py's `GatewayConfig` instead
+  // of a per-instance attribute computed the same way.
+  const SERVER_POLL_INTERVAL_MS = {{ server_poll_interval_ms }};
+</script>
+<script src="{{ url_for('static', filename='js/log-viewer.js') }}"></script>
+{% endblock %}
