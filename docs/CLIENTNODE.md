@@ -110,6 +110,12 @@ recompute it after the check.
   scope). Otherwise: **`403`**.
 - The clientless case (`""`) additionally requires the **`master_admin`** role. A regular account
   cannot send a fully clientless alert, even with a wildcard scope.
+- A non-empty effective client must also be a **registered, active client** (the master_admin-only
+  Clients page). Otherwise: **`400`**, with an explicit `{"error": "Unknown client", ...}` body —
+  not a silent drop, and not the generic `403 forbidden` a missing-scope failure returns. This
+  check runs *after* the scope check above, so an unauthorized caller never learns whether a
+  client name is registered. The clientless case (`""`) is never checked against this registry —
+  it's a distinct, valid state, not a missing client name.
 
 Practically: omit `client` and let your account's `default_client` apply, unless you are a
 multi-tenant sender that legitimately writes for several clients — in which case set it
@@ -165,6 +171,7 @@ Success and server errors are keyed on `status`; client errors are keyed on `err
 | `400` | Body is not valid JSON | `{"error":"Invalid JSON format","detail":…,"json_error":…,"hint":…}` |
 | `400` | Empty body, **including `{}`** | `{"error":"Empty JSON payload","detail":"Request body cannot be empty"}` |
 | `400` | Missing required field(s) | `{"error":"Missing required fields: …","required_fields":[…]}` |
+| `400` | Effective `client` is non-empty but not a registered, active client | `{"error":"Unknown client","detail":"Client '<name>' is not a registered client.","client":"<name>"}` |
 | `401` | Bad credentials, or account locked (5 failed logins → 900 s) | `{"status":"error","error":"authentication required"}` |
 | `403` | No `alerts:write` scope for the effective client, or clientless without `master_admin` | `{"status":"error","error":"forbidden"}` |
 | `500` | Broker publish failed | `{"status":"error","message":"Failed to forward alert to MQTT broker"}` |
@@ -184,6 +191,16 @@ curl -X POST https://alert.d-t.pw/alert \
   -H "Content-Type: application/json" \
   -d '{"timestamp":'$(date +%s)',"level":"warning","category":"system","title":"Alert","message":"Test","source":"curl"}'
 ```
+
+### Linux host health agent (turn-key)
+
+For plain "is this box and its containers alive and healthy" reporting, use the ready-made
+agent at [`clients/linux-agent/`](../clients/linux-agent/) instead of writing your own sender.
+It is a single bash script (deps: `jq`, `curl`) for a 30-minute root cron/systemd timer that
+sends proof-of-life snapshots (host telemetry + Docker container summary) every run, plus
+debounced threshold alerts for disk/load/memory, container state changes, and new kernel
+warnings/errors. Configuration is one dotenv file (`ALERT_URL`, `ALERT_CLIENT`, `ALERT_TOKEN`);
+see its [README](../clients/linux-agent/README.md) for install and provisioning.
 
 ### Python — SDK (recommended)
 
@@ -319,3 +336,4 @@ if you are building a sign, not a sender.
 | `HTTP_GATEWAY.md` | Full HTTP endpoint reference |
 | `AUTH.md` | Auth model: sessions, RBAC roles/scopes, tokens, lockout |
 | `ALERT_PAYLOAD_SPEC.md` | Extended payload specification |
+| [`clients/linux-agent/README.md`](../clients/linux-agent/README.md) | Turn-key Linux host/Docker health agent |

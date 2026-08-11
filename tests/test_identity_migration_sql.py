@@ -75,8 +75,8 @@ def test_db_migrate_discovers_it_as_version_2():
     assert versions.get(2) == "0002_identity.sql"
 
 
-def test_all_three_migrations_coexist_in_sorted_order():
-    # 0001 -> 0002 -> 0003 must all be discoverable together with no
+def test_all_migrations_coexist_in_sorted_order():
+    # 0001 -> 0002 -> 0003 -> 0004 must all be discoverable together with no
     # duplicate-version collision (discover_migrations raises on that), and
     # sorted() must yield exactly this order.
     migrations = db_migrate.discover_migrations(MIGRATION_PATH.parent)
@@ -85,6 +85,7 @@ def test_all_three_migrations_coexist_in_sorted_order():
         "0001_partition_management.sql",
         "0002_identity.sql",
         "0003_email_log.sql",
+        "0004_clients.sql",
     ]
 
 

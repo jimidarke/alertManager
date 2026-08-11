@@ -1,0 +1,54 @@
+<!--
+  Alert Manager - admin: new client form
+
+  Extends layout.html. Serves GET/POST /admin/clients/new
+  (new_client_form/create_client) -- gateway/admin/routes.py's
+  create_client() re-renders this exact template (status 400) on a
+  validation failure, with the submitted values preserved, same
+  400-and-re-render convention as user_form.html (see that file's own
+  header comment / admin/routes.py's module docstring section 5).
+
+  Create-only -- no edit route exists (module docstring section 6): the
+  clients registry's full lifecycle is create/list/disable/enable, no
+  rename. Passes:
+    - name: None on a fresh GET; the raw submitted value on a 400
+      re-render, so a rejected create doesn't lose what the admin typed.
+    - description: same -- None on a fresh GET, the raw submitted value
+      (or None if blank) on a 400 re-render.
+    - error: None, or a message string to show above the form.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Admin: New Client{% endblock %}
+
+{% block content %}
+<div class="admin-client-form">
+  <h1>New client</h1>
+
+  {% if error %}
+  <div class="flash flash-error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('admin.create_client') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="form-group">
+      <label for="client-form-name">Name</label>
+      <input type="text" id="client-form-name" name="name" value="{{ name or '' }}"
+             pattern="^[a-z0-9_-]{1,255}$" minlength="1" maxlength="255"
+             autocomplete="off" autofocus required>
+      <small>1-255 chars: lowercase letters, digits, "-", "_". Cannot be changed later.</small>
+    </div>
+
+    <div class="form-group">
+      <label for="client-form-description">Description <span class="tiny">(optional)</span></label>
+      <textarea id="client-form-description" name="description" rows="3">{{ description or '' }}</textarea>
+    </div>
+
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ url_for('admin.list_clients') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

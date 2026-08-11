@@ -26,6 +26,7 @@ from .store import (
     MASTER_ADMIN_ROLE,
     TOKEN_PREFIX,
     TOKEN_RANDOM_BYTES,
+    ClientNotFoundError,
     PrincipalData,
     RoleNotFoundError,
     TokenNotFoundError,
@@ -51,4 +52,5 @@ __all__ = [
     "UserNotFoundError",
     "RoleNotFoundError",
     "TokenNotFoundError",
+    "ClientNotFoundError",
 ]

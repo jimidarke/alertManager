@@ -171,39 +171,42 @@ highest-priority thing to get right here. Consistent across every route in
 this blueprint -- no route in this file ever redirects except on SUCCESS.
 
 --------------------------------------------------------------------------
-6. Client datalist query
+6. Clients registry (sql/migrations/0004_clients.sql)
 --------------------------------------------------------------------------
-`_distinct_clients()`: distinct `alerts.client` (non-null, non-empty),
-queried directly against `app.extensions['db_pool']` via the shared
-`gateway.db.pooled_cursor()` helper (the same pooled connection
-`gateway/dashboard/routes.py` and `gateway/api/routes.py` use for their own
-gateway-owned queries), UNIONed in Python with distinct `role_scopes.client`
-(non-null, non-empty, excluding the `'*'` wildcard sentinel -- it is not a
-real client name to suggest) read via `UserStore.list_all_scope_clients()`
--- `UserStore` remains the single owner of every `role_scopes` read,
-`UserStore` deliberately has no pool of its own (see `userstore/store.py`'s
-module docstring). Purely a UI convenience for the `<input list>`
-autocomplete; a failure on EITHER half is caught, logged, and degrades that
-half to an empty set rather than blocking the create/edit form from
-rendering at all -- deliberately NOT the hard 503-on-failure contract
-`gateway.db.pooled_cursor()`'s callers in `gateway/dashboard/routes.py`
-enforce for their actual data queries, because this is suggestion data, not
-the thing the page exists to show.
+`_active_client_names()`: registered, active client names, read straight
+from `UserStore.list_clients(active_only=True)` -- feeds the Default
+client / Scope client `<select>` options on the create/edit-user form.
+Supersedes the former `_distinct_clients()` best-effort autocomplete
+datalist (built from `alerts.client` UNIONed with
+`UserStore.list_all_scope_clients()`'s `role_scopes.client` scan), which
+existed only because there was no real client registry to query directly.
+`create_user()`/`update_user()` validate every submitted scope-row client
+and `default_client` against this same registered/active set (the `'*'`
+wildcard sentinel stays exempt -- it is never a `clients` table row); an
+unregistered client is rejected the same 400-and-re-render way any other
+validation failure in this blueprint is (section 5 above). The
+`/admin/clients` routes below (list/new/create/disable/enable) are the
+admin UI for the registry itself -- same `admin_bp`, same
+master_admin/CSRF/400-re-render conventions as every other route in this
+file; no self-lockout-style guard rail, since a client has no "self"
+concept the way a user disabling their own account does.
 
 --------------------------------------------------------------------------
 7. Templates: real, Task 27-built (`src/gateway/templates/admin/`)
 --------------------------------------------------------------------------
 Every handler below calls `render_template()` with the real final template
 names/paths (`admin/users_list.html`, `admin/user_form.html`,
-`admin/password_result.html`, under `src/gateway/templates/` -- Flask's
+`admin/password_result.html`, `admin/clients_list.html`,
+`admin/client_form.html`, under `src/gateway/templates/` -- Flask's
 default template folder relative to this package's root_path, matching
 `docs/OVERHAUL_PLAN.md` section 4.3's tree), extending the shared
-`layout.html` (Task 24). The context variables each view passes (`users`,
-`mode`, `username`, `roles`, `selected_roles`, `scope_rows`, `tokens`,
-`issue_token`, `token_name`, `clients`, `allowed_permissions`, `error`,
-`password`, `token`) are the contract Task 27's templates are built
-against; see `tests/test_gateway_admin_templates.py` for the
-template-level test coverage.
+`layout.html` (Task 24). The context variables each user-form view passes
+(`users`, `mode`, `username`, `roles`, `selected_roles`, `scope_rows`,
+`tokens`, `issue_token`, `token_name`, `default_client`, `clients`,
+`allowed_permissions`, `error`, `password`, `token`) are the contract
+Task 27's templates are built against; see
+`tests/test_gateway_admin_templates.py` for the template-level test
+coverage.
 
 --------------------------------------------------------------------------
 8. Bearer tokens: web-UI equivalent of tools/user-manager.py's create-token/
@@ -234,9 +237,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from flask import Blueprint, Response, abort, current_app, g, make_response, redirect, render_template, request, url_for
 
-from gateway.db import DBUnavailable, pooled_cursor
 from gateway.principal import require_master_admin
-from userstore import ALLOWED_PERMISSIONS, MASTER_ADMIN_ROLE, UserNotFoundError, UserStore
+from userstore import ALLOWED_PERMISSIONS, MASTER_ADMIN_ROLE, ClientNotFoundError, UserNotFoundError, UserStore
 
 logger = logging.getLogger("gateway.admin")
 
@@ -244,6 +246,11 @@ admin_bp = Blueprint("admin", __name__)
 
 # Create-only, per the brief verbatim: 3-32 chars, lowercase letters/digits/-/_.
 USERNAME_RE = re.compile(r"^[a-z0-9_-]{3,32}$")
+
+# Same identifier convention as USERNAME_RE, applied to registered client
+# names -- a client name is now first-class registry data (not free text)
+# and becomes a URL path segment (/admin/clients/<name>/disable).
+CLIENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,255}$")
 
 # Per the brief verbatim -- deliberately NOT tools/user-manager.py's own
 # GENERATED_PASSWORD_BYTES (18); this task's brief specifies 12 explicitly.
@@ -278,10 +285,6 @@ def _user_store() -> UserStore:
     return current_app.extensions["user_store"]
 
 
-def _db_pool():
-    return current_app.extensions["db_pool"]
-
-
 def _actor() -> str:
     return g.principal.username
 
@@ -313,32 +316,16 @@ def _token_name(form) -> str:
 # Read-only DB helpers -- see module docstring sections 4 and 6.
 # ---------------------------------------------------------------------------
 
-def _distinct_clients() -> List[str]:
+def _active_client_names() -> List[str]:
     """
-    Autocomplete data for the scope-row client <input list>: distinct
-    `alerts.client` (this file's own concern -- gateway-owned alert data,
-    queried directly via the pooled `gateway.db.pooled_cursor()` helper)
-    UNIONed with distinct `role_scopes.client` across every role (identity
-    data, so read via `UserStore.list_all_scope_clients()` rather than raw
-    SQL here -- see that method's docstring; `_role_scope_rows()` below has
-    the same rationale). Best-effort: never raises, degrades to []. See
-    module docstring section 6.
+    Registered, active client names -- feeds the Default client / Scope
+    client <select> options on the create/edit-user form. Supersedes the
+    former `_distinct_clients()` best-effort autocomplete datalist (built
+    from `alerts.client` UNIONed with `role_scopes.client`) now that
+    `clients` (sql/migrations/0004_clients.sql) is a real registry to
+    query directly.
     """
-    alert_clients: set = set()
-    try:
-        with pooled_cursor(_db_pool()) as cur:
-            cur.execute("SELECT DISTINCT client FROM alerts WHERE client IS NOT NULL AND client != ''")
-            alert_clients = {row["client"] for row in cur.fetchall()}
-    except DBUnavailable as exc:
-        logger.warning("Admin datalist alert-client query failed (degrading to empty list): %s", exc)
-
-    try:
-        scope_clients = _user_store().list_all_scope_clients()
-    except Exception as exc:
-        logger.warning("Admin datalist scope-client query failed (degrading to empty list): %s", exc)
-        scope_clients = set()
-
-    return sorted(alert_clients | scope_clients)
+    return [c["name"] for c in _user_store().list_clients(active_only=True)]
 
 
 def _role_scope_rows(role_id: int) -> List[Dict[str, str]]:
@@ -418,6 +405,7 @@ def _render_user_form(
     tokens: Optional[List[Dict[str, Any]]] = None,
     issue_token: bool = False,
     token_name: str = DEFAULT_TOKEN_NAME,
+    default_client: Optional[str] = None,
     error: Optional[str] = None,
     status: int = 200,
 ):
@@ -430,7 +418,8 @@ def _render_user_form(
         "tokens": tokens or [],
         "issue_token": issue_token,
         "token_name": token_name,
-        "clients": _distinct_clients(),
+        "default_client": default_client,
+        "clients": _active_client_names(),
         "allowed_permissions": sorted(ALLOWED_PERMISSIONS),
         "default_scope_permissions": DEFAULT_SCOPE_PERMISSIONS,
         "master_admin_role": MASTER_ADMIN_ROLE,
@@ -510,6 +499,7 @@ def create_user():
     scope_pairs = _parse_scope_pairs(request.form)
     issue_token = request.form.get("issue_token") is not None
     token_name = _token_name(request.form)
+    default_client = _normalize_client(request.form.get("default_client", "")) or None
 
     def _reject(message: str):
         return _render_user_form(
@@ -519,6 +509,7 @@ def create_user():
             scope_rows=_group_scope_pairs(scope_pairs),
             issue_token=issue_token,
             token_name=token_name,
+            default_client=default_client,
             error=message,
             status=400,
         )
@@ -538,9 +529,19 @@ def create_user():
         if permission not in ALLOWED_PERMISSIONS:
             return _reject(f"Invalid permission {permission!r}.")
 
+    # Clients are a real registry now (sql/migrations/0004_clients.sql), not
+    # freeform text -- every scope row's client (except the `'*'` wildcard
+    # sentinel, which is never a table row) and default_client must already
+    # be registered and active.
+    known_client_names = {c["name"] for c in _user_store().list_clients(active_only=True)}
+    for client, _permission in scope_pairs:
+        if client != "*" and client not in known_client_names:
+            return _reject(f"Unknown client {client!r}. Register it on the Clients page first.")
+    if default_client and default_client not in known_client_names:
+        return _reject(f"Unknown client {default_client!r}. Register it on the Clients page first.")
+
     password = secrets.token_urlsafe(GENERATED_PASSWORD_BYTES)
     actor, source_ip = _actor(), _source_ip()
-    default_client = _normalize_client(request.form.get("default_client", "")) or None
 
     # v3.0.0: `must_change_password` is now actually enforced (a
     # `before_request` gate in gateway/__init__.py redirects browser sessions
@@ -658,6 +659,13 @@ def update_user(username: str):
     for _client, permission in scope_pairs:
         if permission not in ALLOWED_PERMISSIONS:
             return _reject(f"Invalid permission {permission!r}.")
+
+    # See create_user()'s identical check: clients are a real registry now,
+    # not freeform text. `'*'` stays exempt (never a table row).
+    known_client_names = {c["name"] for c in _user_store().list_clients(active_only=True)}
+    for client, _permission in scope_pairs:
+        if client != "*" and client not in known_client_names:
+            return _reject(f"Unknown client {client!r}. Register it on the Clients page first.")
 
     actor, source_ip = _actor(), _source_ip()
 
@@ -828,3 +836,73 @@ def revoke_token(username: str, token_id: int):
 
     store.revoke_token(token_id, actor=_actor(), source_ip=_source_ip())
     return redirect(url_for("admin.edit_user_form", username=username_norm))
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/clients -- list; GET/POST /admin/clients/new -- create;
+# POST .../disable, POST .../enable -- soft-disable/re-enable
+#
+# The clients registry (sql/migrations/0004_clients.sql): promotes "client"
+# from pure free text into a real, admin-managed list. No delete route --
+# same "no hard delete for a named entity" convention as users/roles;
+# disable/enable is the full lifecycle. No self-lockout-style guard rail
+# here -- there is no "self" concept for a client, unlike a user disabling
+# their own account or removing their own master_admin role.
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/clients", methods=["GET"])
+@require_master_admin
+def list_clients():
+    return render_template("admin/clients_list.html", clients=_user_store().list_clients())
+
+
+@admin_bp.route("/admin/clients/new", methods=["GET"])
+@require_master_admin
+def new_client_form():
+    return render_template("admin/client_form.html", name=None, description=None, error=None)
+
+
+@admin_bp.route("/admin/clients/new", methods=["POST"])
+@require_master_admin
+def create_client():
+    store = _user_store()
+    name_raw = request.form.get("name", "")
+    name = _normalize_client(name_raw)
+    description = request.form.get("description", "").strip() or None
+
+    def _reject(message: str):
+        return render_template(
+            "admin/client_form.html", name=name_raw, description=description, error=message
+        ), 400
+
+    if not CLIENT_NAME_RE.match(name):
+        return _reject(
+            f"Client name must match {CLIENT_NAME_RE.pattern} (1-255 chars: lowercase letters, digits, '-', '_')."
+        )
+    if name == "*":
+        return _reject("'*' is reserved as the wildcard scope sentinel and cannot be a registered client name.")
+    if store.get_client(name) is not None:
+        return _reject(f"Client {name!r} is already registered.")
+
+    store.create_client(name, description, actor=_actor(), source_ip=_source_ip())
+    return redirect(url_for("admin.list_clients"))
+
+
+@admin_bp.route("/admin/clients/<name>/disable", methods=["POST"])
+@require_master_admin
+def disable_client(name: str):
+    try:
+        _user_store().disable_client(_normalize_client(name), actor=_actor(), source_ip=_source_ip())
+    except ClientNotFoundError:
+        abort(404)
+    return redirect(url_for("admin.list_clients"))
+
+
+@admin_bp.route("/admin/clients/<name>/enable", methods=["POST"])
+@require_master_admin
+def enable_client(name: str):
+    try:
+        _user_store().enable_client(_normalize_client(name), actor=_actor(), source_ip=_source_ip())
+    except ClientNotFoundError:
+        abort(404)
+    return redirect(url_for("admin.list_clients"))

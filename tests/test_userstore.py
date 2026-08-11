@@ -49,6 +49,7 @@ from userstore.store import (  # noqa: E402
     LOCKOUT_THRESHOLD,
     TOKEN_PREFIX,
     TOKEN_RANDOM_BYTES,
+    ClientNotFoundError,
     PrincipalData,
     RoleNotFoundError,
     TokenNotFoundError,
@@ -791,12 +792,12 @@ def test_revoke_token_raises_when_missing(mocker, store):
         store.revoke_token(999)
 
 
-# -- list_role_scopes / list_all_scope_clients --------------------------------
+# -- list_role_scopes -----------------------------------------------------
 # Added in the final whole-branch cleanup pass to close the "UserStore single
 # owner" charter leak: gateway/admin/routes.py used to issue raw SQL directly
 # against role_scopes (an identity-schema table) because UserStore exposed no
-# read method for it (only add_scope()/remove_scope() writes). These two
-# methods are that read surface.
+# read method for it (only add_scope()/remove_scope() writes). This method is
+# that read surface.
 
 
 def test_list_role_scopes_returns_client_permission_rows(mocker, store):
@@ -826,27 +827,140 @@ def test_list_role_scopes_empty_for_role_with_no_scopes(mocker, store):
     assert store.list_role_scopes(99) == []
 
 
-def test_list_all_scope_clients_excludes_null_empty_and_wildcard_in_sql(mocker, store):
+# -- client CRUD ---------------------------------------------------------
+# Promotes "client" from pure free text into a real, admin-managed
+# registry (sql/migrations/0004_clients.sql). Supersedes the former
+# list_all_scope_clients() primitive, which only ever existed to feed
+# gateway/admin/routes.py's best-effort autocomplete datalist.
+
+
+def test_create_client_inserts_and_audits(mocker, store):
     mock_conn = _patch_connect(mocker)
     cur = _mock_cursor(mocker, mock_conn)
-    cur.fetchall.return_value = [{"client": "acme"}, {"client": "revysmc"}]
+    cur.fetchone.return_value = {"id": 3}
 
-    result = store.list_all_scope_clients()
+    client_id = store.create_client("  ACME  ", "Acme Corp", actor="jimi", source_ip="1.2.3.4")
 
-    (sql,) = cur.execute.call_args.args
-    assert "role_scopes" in sql
-    assert "client IS NOT NULL" in sql
-    assert "client != ''" in sql
-    assert "client != '*'" in sql
-    assert result == {"acme", "revysmc"}
+    assert client_id == 3
+    insert_sql, insert_params = cur.execute.call_args_list[0].args
+    assert "INSERT INTO clients" in insert_sql
+    assert insert_params[0] == "acme"  # normalized: stripped + lowercased
+    assert insert_params[1] == "Acme Corp"
+
+    audit_sql, audit_params = cur.execute.call_args_list[1].args
+    assert "INSERT INTO auth_audit" in audit_sql
+    assert audit_params[1] == "client_created"
+    assert audit_params[2] is None  # no user subject for an entity-level event
+    assert audit_params[4].adapted == {"actor": "jimi", "client": "acme"}
 
 
-def test_list_all_scope_clients_empty_when_no_scopes_exist(mocker, store):
+def test_list_clients_orders_by_name(mocker, store):
     mock_conn = _patch_connect(mocker)
     cur = _mock_cursor(mocker, mock_conn)
     cur.fetchall.return_value = []
 
-    assert store.list_all_scope_clients() == set()
+    store.list_clients()
+
+    (sql,) = cur.execute.call_args.args
+    assert "SELECT id, name, description, status, created_at, updated_at FROM clients" in sql
+    assert "ORDER BY name" in sql
+    assert "WHERE" not in sql
+
+
+def test_list_clients_active_only_filters_status(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchall.return_value = []
+
+    store.list_clients(active_only=True)
+
+    (sql,) = cur.execute.call_args.args
+    assert "WHERE status = 'active'" in sql
+
+
+def test_get_client_returns_none_for_missing(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = None
+
+    assert store.get_client("ghost") is None
+
+
+def test_client_exists_true_for_active_client(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"?column?": 1}
+
+    assert store.client_exists("acme") is True
+    sql, params = cur.execute.call_args.args
+    assert "AND status = 'active'" in sql
+    assert params == ["acme"]
+
+
+def test_client_exists_false_for_disabled_client_when_active_only(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = None  # the AND status = 'active' filter excludes it
+
+    assert store.client_exists("acme", active_only=True) is False
+
+
+def test_client_exists_true_for_disabled_client_when_active_only_false(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"?column?": 1}
+
+    assert store.client_exists("acme", active_only=False) is True
+    sql, _ = cur.execute.call_args.args
+    assert "status = 'active'" not in sql
+
+
+def test_disable_client_raises_client_not_found_error(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = None
+
+    with pytest.raises(ClientNotFoundError):
+        store.disable_client("ghost")
+
+
+def test_enable_client_raises_client_not_found_error(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = None
+
+    with pytest.raises(ClientNotFoundError):
+        store.enable_client("ghost")
+
+
+def test_disable_client_updates_status_and_audits(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"id": 3}
+
+    store.disable_client("ACME", actor="jimi")
+
+    update_sql, update_params = cur.execute.call_args_list[0].args
+    assert "UPDATE clients SET status = 'disabled'" in update_sql
+    assert update_params[1] == "acme"
+
+    audit_sql, audit_params = cur.execute.call_args_list[1].args
+    assert audit_params[1] == "client_disabled"
+
+
+def test_enable_client_updates_status_and_audits(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"id": 3}
+
+    store.enable_client("ACME", actor="jimi")
+
+    update_sql, update_params = cur.execute.call_args_list[0].args
+    assert "UPDATE clients SET status = 'active'" in update_sql
+    assert update_params[1] == "acme"
+
+    audit_sql, audit_params = cur.execute.call_args_list[1].args
+    assert audit_params[1] == "client_enabled"
 
 
 # -- recent_audit filtering ---------------------------------------------------
@@ -1031,7 +1145,7 @@ def test_create_token_and_verify_token_round_trip_against_real_postgres():
 
 
 @pytest.mark.skipif(not AM_TEST_DSN, reason="AM_TEST_DSN not set; no live Postgres available")
-def test_list_role_scopes_and_list_all_scope_clients_against_real_postgres():
+def test_list_role_scopes_against_real_postgres():
     role_name = "am_test_userstore_scope_role"
     _cleanup_test_role(role_name)
     store = _live_store()
@@ -1039,7 +1153,7 @@ def test_list_role_scopes_and_list_all_scope_clients_against_real_postgres():
         role_id = store.create_role(role_name, description="integration test scope role")
         store.add_scope(role_name, "acme", "logs:read")
         store.add_scope(role_name, "ACME", "alerts:write")  # exercises client normalization
-        store.add_scope(role_name, "*", "*")  # wildcard client -- excluded from list_all_scope_clients()
+        store.add_scope(role_name, "*", "*")  # wildcard client -- not a `clients` table row
 
         scopes = store.list_role_scopes(role_id)
         assert {(row["client"], row["permission"]) for row in scopes} == {
@@ -1047,12 +1161,45 @@ def test_list_role_scopes_and_list_all_scope_clients_against_real_postgres():
             ("acme", "alerts:write"),
             ("*", "*"),
         }
-
-        all_clients = store.list_all_scope_clients()
-        assert "acme" in all_clients
-        assert "*" not in all_clients
     finally:
         _cleanup_test_role(role_name)
+
+
+def _cleanup_test_client(name: str) -> None:
+    import psycopg2
+
+    conn = psycopg2.connect(AM_TEST_DSN)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM clients WHERE name = %s", (name,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.skipif(not AM_TEST_DSN, reason="AM_TEST_DSN not set; no live Postgres available")
+def test_client_crud_against_real_postgres():
+    name = "am_test_userstore_client"
+    _cleanup_test_client(name)
+    store = _live_store()
+    try:
+        store.create_client(name, description="integration test client")
+
+        assert store.client_exists(name) is True
+        row = store.get_client(name)
+        assert row["name"] == name
+        assert row["status"] == "active"
+        assert any(c["name"] == name for c in store.list_clients(active_only=True))
+
+        store.disable_client(name)
+        assert store.client_exists(name, active_only=True) is False
+        assert store.client_exists(name, active_only=False) is True
+        assert not any(c["name"] == name for c in store.list_clients(active_only=True))
+
+        store.enable_client(name)
+        assert store.client_exists(name) is True
+    finally:
+        _cleanup_test_client(name)
 
 
 # -- unlock_user / list_tokens (v3.0.0) -------------------------------------

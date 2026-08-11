@@ -61,7 +61,7 @@ import secrets
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, FrozenSet, List, Optional, Set, Union
+from typing import Any, ClassVar, Dict, FrozenSet, List, Optional, Union
 
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
@@ -137,6 +137,12 @@ class TokenNotFoundError(UserStoreError):
     def __init__(self, token_id: Any):
         super().__init__(f"no such token: {token_id!r}")
         self.token_id = token_id
+
+
+class ClientNotFoundError(UserStoreError):
+    def __init__(self, name: str):
+        super().__init__(f"no such client: {name!r}")
+        self.name = name
 
 
 # ---------------------------------------------------------------------------
@@ -951,28 +957,98 @@ class UserStore:
             rows = cur.fetchall()
         return [dict(row) for row in rows]
 
-    def list_all_scope_clients(self) -> Set[str]:
-        """
-        Return the set of distinct, real (non-null, non-empty,
-        non-wildcard) client names appearing anywhere in `role_scopes`,
-        across every role. Purpose-built for `gateway/admin/routes.py`'s
-        client-autocomplete datalist, which UNIONs this against
-        `alerts.client` (a different table that is legitimately NOT this
-        module's business -- alert data, not identity data) to build one
-        suggestion list; kept as its own small primitive rather than
-        forcing `list_role_scopes()` (which is naturally scoped to ONE
-        role_id) to also serve this "distinct clients across ALL roles"
-        shape.
+    # -- client CRUD ---------------------------------------------------------
+    #
+    # Promotes "client" from pure free text (any string accepted in
+    # role_scopes.client / an alert payload, checked only against the
+    # caller's own scope -- see sql/migrations/0004_clients.sql's own
+    # comment) into a real, admin-managed registry. Superseded the former
+    # `list_all_scope_clients()` primitive, which only ever existed to feed
+    # gateway/admin/routes.py's best-effort autocomplete datalist -- that
+    # datalist is gone now that there's a real table to query directly.
+    #
+    # The `'*'` wildcard client sentinel is NOT a row in this table and
+    # never will be -- it stays a Python-layer special case wherever a
+    # scope's client is checked (has_permission() below, and
+    # gateway/admin/routes.py's scope-row validation).
 
-        The `'*'` wildcard sentinel is excluded -- it is not a real client
-        name to ever suggest in an autocomplete list.
-        """
+    def create_client(
+        self, name: str, description: Optional[str] = None, *, actor: Optional[str] = None, source_ip: Optional[str] = None
+    ) -> int:
+        """Register a new client (status='active') and return its id."""
+        name_norm = _normalize_client(name)
+        now = int(time.time())
         with self._cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT client FROM role_scopes WHERE client IS NOT NULL AND client != '' AND client != '*'"
+                "INSERT INTO clients (name, description, status, created_at, updated_at) "
+                "VALUES (%s, %s, 'active', %s, %s) RETURNING id",
+                (name_norm, description, now, now),
             )
+            client_id = cur.fetchone()["id"]
+            self._write_audit(cur, "client_created", None, source_ip, _detail(actor, client=name_norm))
+        return client_id
+
+    def list_clients(self, *, active_only: bool = False) -> List[Dict[str, Any]]:
+        """Every registered client (id, name, description, status, created_at, updated_at), ordered by name."""
+        query = "SELECT id, name, description, status, created_at, updated_at FROM clients"
+        if active_only:
+            query += " WHERE status = 'active'"
+        query += " ORDER BY name"
+        with self._cursor() as cur:
+            cur.execute(query)
             rows = cur.fetchall()
-        return {row["client"] for row in rows}
+        return [dict(row) for row in rows]
+
+    def get_client(self, name: str) -> Optional[Dict[str, Any]]:
+        name_norm = _normalize_client(name)
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT id, name, description, status, created_at, updated_at FROM clients WHERE name = %s",
+                (name_norm,),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
+    def client_exists(self, name: str, *, active_only: bool = True) -> bool:
+        """
+        True if `name` is a registered client. active_only=True (the
+        default, and what gateway/api/routes.py's POST /alert check uses)
+        additionally requires status='active' -- a disabled client must
+        reject new alerts exactly the way a disabled user can no longer
+        log in, even though its row is never deleted.
+        """
+        name_norm = _normalize_client(name)
+        query = "SELECT 1 FROM clients WHERE name = %s"
+        params: List[Any] = [name_norm]
+        if active_only:
+            query += " AND status = 'active'"
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone() is not None
+
+    def disable_client(self, name: str, *, actor: Optional[str] = None, source_ip: Optional[str] = None) -> None:
+        name_norm = _normalize_client(name)
+        now = int(time.time())
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE clients SET status = 'disabled', updated_at = %s WHERE name = %s RETURNING id",
+                (now, name_norm),
+            )
+            if cur.fetchone() is None:
+                raise ClientNotFoundError(name_norm)
+            self._write_audit(cur, "client_disabled", None, source_ip, _detail(actor, client=name_norm))
+
+    def enable_client(self, name: str, *, actor: Optional[str] = None, source_ip: Optional[str] = None) -> None:
+        name_norm = _normalize_client(name)
+        now = int(time.time())
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE clients SET status = 'active', updated_at = %s WHERE name = %s RETURNING id",
+                (now, name_norm),
+            )
+            if cur.fetchone() is None:
+                raise ClientNotFoundError(name_norm)
+            self._write_audit(cur, "client_enabled", None, source_ip, _detail(actor, client=name_norm))
 
     # -- audit -------------------------------------------------------------
 

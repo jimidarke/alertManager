@@ -156,7 +156,7 @@ import logging
 import os
 import time
 from functools import wraps
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request, send_from_directory
 
@@ -374,6 +374,32 @@ def _alert_effective_client() -> str:
     return raw_client or g.principal.default_client or ""
 
 
+def _unknown_client_response(client: str) -> Tuple[Response, int]:
+    """
+    400, not 403/422: matches this route's own established vocabulary for
+    "the payload's field values are unacceptable" (Content-Type/JSON-parse/
+    empty-body/missing-fields all return a bespoke 400 body keyed on
+    "error", no "status" key). Distinct from the generic
+    {"status":"error","error":"forbidden"} body `_jsonify_auth_errors`
+    would otherwise stamp onto a bare `abort(403)` -- returning real
+    `application/json` here directly means that hook (which only rewrites
+    401/403 responses) leaves this response untouched, so the caller gets
+    THIS specific message, not a generic "forbidden" indistinguishable
+    from a missing-scope 403.
+    """
+    return (
+        jsonify(
+            {
+                "error": "Unknown client",
+                "detail": f"Client {client!r} is not a registered client.",
+                "client": client,
+                "timestamp": iso_now(),
+            }
+        ),
+        400,
+    )
+
+
 def _require_alert_permission(fn):
     """
     Wraps `_require_cached_alert_auth` (auth) with this route's specific
@@ -383,6 +409,17 @@ def _require_alert_permission(fn):
     effective client on `g.alert_client` so the view can reuse the EXACT
     value that was authorized, instead of recomputing (and risking it
     silently drifting from what was actually checked).
+
+    A non-empty effective client must also be a registered, active row in
+    the `clients` table (sql/migrations/0004_clients.sql) -- checked
+    AFTER authorization, not before: `has_permission()` is a pure
+    in-memory lookup on `principal.scopes` (no DB call), so an
+    unauthorized caller is already rejected by the existing 403 without
+    ever touching the registry or learning whether the client name is
+    real. Checking existence first would let any authenticated principal,
+    regardless of scope, probe which client names exist. `client == ""`
+    (clientless) is never checked against the registry -- it's a
+    distinct, already-authorized valid state, not a missing client name.
     """
 
     @wraps(fn)
@@ -394,6 +431,9 @@ def _require_alert_permission(fn):
             abort(403)
         if client == "" and not principal.is_master_admin():
             abort(403)
+
+        if client and not _user_store().client_exists(client):
+            return _unknown_client_response(client)
 
         g.alert_client = client
         return fn(*args, **kwargs)

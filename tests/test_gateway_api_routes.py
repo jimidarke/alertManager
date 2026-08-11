@@ -75,6 +75,13 @@ class FakeUserStore:
         self.token_calls = []
         self.login_exception = None
         self.token_exception = None
+        # None = "open" registry: client_exists() returns True for any
+        # name -- the default for every test above that predates the
+        # clients-registry feature and never calls add_client(). Calling
+        # add_client() switches this store to "closed" registry behavior
+        # (only registered names/statuses answer True) for tests that
+        # actually exercise unknown-client rejection.
+        self._clients = None
 
     def add_user(self, username, password, **kwargs) -> PrincipalData:
         data = _principal_data(username=username, **kwargs)
@@ -100,6 +107,19 @@ class FakeUserStore:
         if self.token_exception is not None:
             raise self.token_exception
         return self._tokens.get(token)
+
+    def add_client(self, name, status="active"):
+        if self._clients is None:
+            self._clients = {}
+        self._clients[name] = status
+
+    def client_exists(self, name, *, active_only=True):
+        if self._clients is None:
+            return True
+        status = self._clients.get(name)
+        if status is None:
+            return False
+        return not active_only or status == "active"
 
 
 class FakeMqttPublisher:
@@ -425,6 +445,73 @@ def test_alert_success_via_bearer_token(client, store, mqtt):
     store.add_token("amt_sometoken", username="node2", scopes={"revysmc": frozenset({"alerts:write"})})
     payload = dict(VALID_ALERT, client="revysmc")
     resp = client.post("/alert", json=payload, headers=_bearer("amt_sometoken"))
+    assert resp.status_code == 200
+    assert mqtt.published[0]["client"] == "revysmc"
+
+
+# ---------------------------------------------------------------------------
+# POST /alert -- the clients registry (sql/migrations/0004_clients.sql):
+# an authorized-but-unregistered client is now rejected with 400, not
+# silently accepted. store.add_client(...) below switches FakeUserStore
+# from its default "open" registry (client_exists() always True, matching
+# every test above written before this feature) into "closed" registry
+# behavior for these tests specifically.
+# ---------------------------------------------------------------------------
+
+def test_alert_400_unknown_client_not_in_registry(client, store, mqtt):
+    store.add_user("node1", "secret", scopes={"*": frozenset({"alerts:write"})})
+    store.add_client("revysmc")  # some OTHER client is registered; "acme" is not
+    payload = dict(VALID_ALERT, client="acme")
+    resp = client.post("/alert", json=payload, headers=_basic("node1", "secret"))
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["error"] == "Unknown client"
+    assert body["client"] == "acme"
+    assert mqtt.published == []
+
+
+def test_alert_400_disabled_client_rejected(client, store, mqtt):
+    store.add_user("node1", "secret", scopes={"*": frozenset({"alerts:write"})})
+    store.add_client("acme", status="disabled")
+    payload = dict(VALID_ALERT, client="acme")
+    resp = client.post("/alert", json=payload, headers=_basic("node1", "secret"))
+    assert resp.status_code == 400
+    assert resp.get_json()["error"] == "Unknown client"
+    assert mqtt.published == []
+
+
+def test_alert_403_before_400_when_both_unauthorized_and_unregistered(client, store, mqtt):
+    # Existence is checked AFTER authorization: a principal with no
+    # matching scope for "acme" gets the existing 403, never reaching (or
+    # revealing anything about) the registry check -- even though "acme"
+    # also happens not to be registered.
+    store.add_user("node1", "secret", scopes={"revysmc": frozenset({"alerts:write"})})
+    store.add_client("revysmc")  # registry is "closed" now; "acme" is not in it either
+    payload = dict(VALID_ALERT, client="acme")
+    resp = client.post("/alert", json=payload, headers=_basic("node1", "secret"))
+    assert resp.status_code == 403
+    assert resp.get_json()["error"] == "forbidden"
+    assert mqtt.published == []
+
+
+def test_alert_clientless_never_checked_against_registry(client, store, mqtt):
+    # Clientless ('') is a distinct, already-authorized valid state (master
+    # admin only) -- never checked against the registry, even when the
+    # registry is closed and empty.
+    store.add_user(
+        "root", "secret", default_client=None, roles=frozenset({"master_admin"}), scopes={"*": frozenset({"*"})}
+    )
+    store.add_client("some-other-client")  # registry is "closed"; nothing named '' could ever be in it
+    resp = client.post("/alert", json=VALID_ALERT, headers=_basic("root", "secret"))
+    assert resp.status_code == 200
+    assert mqtt.published[0]["client"] == ""
+
+
+def test_alert_success_when_client_registered_and_active(client, store, mqtt):
+    store.add_user("node1", "secret", scopes={"revysmc": frozenset({"alerts:write"})})
+    store.add_client("revysmc")
+    payload = dict(VALID_ALERT, client="revysmc")
+    resp = client.post("/alert", json=payload, headers=_basic("node1", "secret"))
     assert resp.status_code == 200
     assert mqtt.published[0]["client"] == "revysmc"
 

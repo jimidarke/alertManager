@@ -1,0 +1,79 @@
+<!--
+  Alert Manager - admin: clients list
+
+  Extends layout.html. Structural clone of users_list.html's table
+  pattern -- see that file's header comment for the general conventions
+  (status-pill classes, inline-form + hidden csrf_token per row action)
+  reused here verbatim.
+
+  Rendered by gateway/admin/routes.py's list_clients() (GET /admin/clients),
+  which passes:
+    - clients: one dict per registered client -- UserStore.list_clients()'s
+      own row (id, name, description, status, created_at, updated_at).
+      NOT active_only-filtered here (unlike _active_client_names(), which
+      IS active_only-filtered for the user-form <select> options) -- this
+      page is the one place a master_admin needs to see disabled clients
+      too, in order to re-enable them.
+
+  The clients registry (sql/migrations/0004_clients.sql) promotes "client"
+  from pure free text into a real, admin-managed list -- see
+  gateway/admin/routes.py's module docstring section 6.
+-->
+{% extends "layout.html" %}
+
+{% block title %}Alert Manager - Admin: Clients{% endblock %}
+
+{% block content %}
+<div class="admin-clients">
+  <div class="page-header">
+    <h1>Clients</h1>
+    <a href="{{ url_for('admin.list_users') }}" class="btn btn-secondary">Users</a>
+    <a href="{{ url_for('admin.new_client_form') }}" class="btn btn-primary">+ New client</a>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clients %}
+        <tr>
+          <td>{{ c.name }}</td>
+          <td>
+            {% if c.description %}{{ c.description }}{% else %}<span class="tiny">-</span>{% endif %}
+          </td>
+          <td>
+            <span class="status-pill status-{{ c.status }}">{{ c.status }}</span>
+          </td>
+          <td>
+            <div class="row-actions">
+              {% if c.status == 'active' %}
+              <form method="post" action="{{ url_for('admin.disable_client', name=c.name) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Disable</button>
+              </form>
+              {% else %}
+              <form method="post" action="{{ url_for('admin.enable_client', name=c.name) }}" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Enable</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="tiny">No clients registered yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

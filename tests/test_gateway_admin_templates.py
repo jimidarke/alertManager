@@ -20,23 +20,23 @@ the TEMPLATES themselves, not a re-test of that route logic:
 - Create-vs-edit username field behavior (a real `name="username"` input
   only on `mode == "new"`; edit shows read-only text, no such input at
   all -- confirmed by ABSENCE of the input, not just presence of text).
-- Scope-row client datalist populated from `clients` (_distinct_clients()).
+- Scope-row/default-client <select> options populated from `clients`
+  (_active_client_names(), sourced from the clients registry).
 - password_result.html: `Cache-Control: no-store`, a copy-to-clipboard
   button wired to the Clipboard API, and the password value appearing
   in the rendered HTML EXACTLY ONCE.
 - CSRF token present on every form in all three templates.
-- XSS safety of client-name data specifically: `alerts.client` is
-  attacker-influenceable (any node-authenticated client can set an
-  arbitrary `client` string on a POSTed alert -- CLAUDE.md's payload
-  schema treats it as a plain, node-supplied string with no additional
-  sanitization beyond strip+lowercase), and `_distinct_clients()` feeds
-  that value straight into the scope-row datalist's `<option value="...">`
-  -- this is a different trust boundary than Task 25's dashboard concern
-  (alert content, never re-interpolated into an attribute), so it gets
-  its own dedicated check: a crafted client value containing `">` /
-  `<script>` must render HTML-escaped, and no template may use Jinja's
-  `|safe` filter anywhere (a static source grep, since a single `|safe`
-  on the wrong variable would silently defeat autoescaping).
+- XSS safety of client-name data specifically: a registered client's
+  `name`/`description` (sql/migrations/0004_clients.sql) is admin-entered,
+  not fully trusted output, and `_active_client_names()` feeds `name`
+  straight into the scope-row/default-client `<select>`'s
+  `<option value="...">` -- this is a different trust boundary than Task
+  25's dashboard concern (alert content, never re-interpolated into an
+  attribute), so it gets its own dedicated check: a crafted client value
+  containing `">` / `<script>` must render HTML-escaped, and no template
+  may use Jinja's `|safe` filter anywhere (a static source grep, since a
+  single `|safe` on the wrong variable would silently defeat
+  autoescaping).
 
 --------------------------------------------------------------------------
 Post-review addition: scope-row removal renumbering (Critical, fixed)
@@ -66,9 +66,8 @@ reproducing the reviewer's exact 3-row scenario both ways.
 
 Same fixture pattern as tests/test_gateway_admin_routes.py (real
 `create_app()`, Postgres/MQTT mocked, a FakeUserStore swapped onto
-`app.extensions['user_store']`, a FakePool answering the two raw-SQL
-helpers `routes.py` issues) -- the Fakes below are a trimmed copy of that
-file's, kept in this file per this repo's established per-file
+`app.extensions['user_store']`) -- the Fakes below are a trimmed copy of
+that file's, kept in this file per this repo's established per-file
 self-containment convention (see tests/test_gateway_dashboard_template.py,
 which does the same relative to tests/test_gateway_dashboard_routes.py).
 """
@@ -84,7 +83,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from gateway import create_app  # noqa: E402
 from gateway.admin.routes import _parse_scope_pairs  # noqa: E402
 from gateway.config import GatewayConfig  # noqa: E402
-from userstore import MASTER_ADMIN_ROLE, PrincipalData, TokenNotFoundError  # noqa: E402
+from userstore import ClientNotFoundError, MASTER_ADMIN_ROLE, PrincipalData, TokenNotFoundError  # noqa: E402
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "src" / "gateway" / "templates" / "admin"
 
@@ -102,9 +101,11 @@ class FakeUserStore:
         self._roles = {}
         self._role_scopes = {}
         self._tokens = {}
+        self._clients = {}
         self._next_user_id = 1
         self._next_role_id = 1
         self._next_token_id = 1
+        self._next_client_id = 1
 
     def seed_user(self, username, *, user_id=None, status="active", default_client=None,
                   must_change_password=False, last_login_at=None, roles=()):
@@ -136,6 +137,15 @@ class FakeUserStore:
     def seed_scope(self, role_name, client, permission):
         self.seed_role(role_name)
         self._role_scopes.setdefault(role_name, set()).add((client.strip().lower(), permission))
+
+    def seed_client(self, name, *, status="active", description=None):
+        name = name.strip().lower()
+        if name in self._clients:
+            return self._clients[name]["id"]
+        cid = self._next_client_id
+        self._next_client_id += 1
+        self._clients[name] = {"id": cid, "name": name, "description": description, "status": status}
+        return cid
 
     def seed_token(self, name, username, *, status="active", expires_at=None, last_used_at=None, created_at=0):
         username = username.strip().lower()
@@ -226,11 +236,32 @@ class FakeUserStore:
         pairs = self._role_scopes.get(role_name, set()) if role_name else set()
         return [{"client": c, "permission": p} for c, p in sorted(pairs)]
 
-    def list_all_scope_clients(self):
-        names = set()
-        for pairs in self._role_scopes.values():
-            names |= {c for c, _p in pairs if c not in (None, "", "*")}
-        return names
+    def list_clients(self, *, active_only=False):
+        rows = sorted(self._clients.values(), key=lambda c: c["name"])
+        return [dict(c) for c in rows if not active_only or c["status"] == "active"]
+
+    def get_client(self, name):
+        c = self._clients.get(name.strip().lower())
+        return dict(c) if c else None
+
+    def create_client(self, name, description=None, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        cid = self._next_client_id
+        self._next_client_id += 1
+        self._clients[name] = {"id": cid, "name": name, "description": description, "status": "active"}
+        return cid
+
+    def disable_client(self, name, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        if name not in self._clients:
+            raise ClientNotFoundError(name)
+        self._clients[name]["status"] = "disabled"
+
+    def enable_client(self, name, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        if name not in self._clients:
+            raise ClientNotFoundError(name)
+        self._clients[name]["status"] = "active"
 
     def create_token(self, name, user_id, *, expires_at=None, actor=None, source_ip=None):
         tid = self._next_token_id
@@ -258,52 +289,6 @@ class FakeMqttPublisher:
 
     def forward_to_mqtt(self, alert_data):
         return True
-
-
-class FakeCursor:
-    """Answers only the one raw-SQL query admin/routes.py still issues against the pool directly: `_distinct_clients()`'s `alerts.client` half (the `role_scopes` half now reads through `UserStore.list_all_scope_clients()` -- see FakeUserStore above)."""
-
-    def __init__(self, alert_clients):
-        self.alert_clients = alert_clients
-        self._result = []
-
-    def execute(self, sql, params=None):
-        if "FROM alerts" in sql:
-            self._result = [{"client": c} for c in sorted(set(self.alert_clients))]
-        else:
-            raise AssertionError(f"FakeCursor got an unrecognized query: {sql}")
-
-    def fetchall(self):
-        return self._result
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-
-class FakeConnection:
-    def __init__(self, cursor):
-        self._cursor = cursor
-
-    def cursor(self, cursor_factory=None):
-        return self._cursor
-
-    def rollback(self):
-        pass
-
-
-class FakePool:
-    def __init__(self, store, alert_clients=None):
-        self.store = store
-        self.alert_clients = alert_clients or []
-
-    def getconn(self):
-        return FakeConnection(FakeCursor(self.alert_clients))
-
-    def putconn(self, conn):
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -338,13 +323,6 @@ def store(app) -> FakeUserStore:
 @pytest.fixture(autouse=True)
 def mqtt(app):
     app.extensions["mqtt_publisher"] = FakeMqttPublisher()
-
-
-@pytest.fixture(autouse=True)
-def pool(app, store):
-    fake_pool = FakePool(store)
-    app.extensions["db_pool"] = fake_pool
-    return fake_pool
 
 
 @pytest.fixture
@@ -387,7 +365,9 @@ def _admin(store, client, username="root", user_id=1):
 # {% extends "layout.html" %} -- real inheritance, all three templates
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("filename", ["users_list.html", "user_form.html", "password_result.html"])
+@pytest.mark.parametrize(
+    "filename", ["users_list.html", "user_form.html", "password_result.html", "clients_list.html", "client_form.html"]
+)
 def test_template_source_extends_layout_html(filename):
     source = (TEMPLATES_DIR / filename).read_text()
     assert re.search(r'{%\s*extends\s+["\']layout\.html["\']\s*%}', source), (
@@ -569,23 +549,23 @@ def test_edit_form_token_forms_have_csrf_token(client, store):
 
 
 # ---------------------------------------------------------------------------
-# Scope-row client datalist populated from `clients`
+# Scope-row / default-client <select> options populated from `clients`
 # ---------------------------------------------------------------------------
 
-def test_scope_datalist_populated_from_clients_context(client, store, pool):
+def test_scope_select_populated_from_clients_context(client, store):
     _admin(store, client)
-    pool.alert_clients = ["acme", "revysmc"]
+    store.seed_client("acme")
+    store.seed_client("revysmc")
     html = client.get("/admin/users/new").get_data(as_text=True)
-    assert re.search(r'<datalist id="clients-datalist">', html)
-    assert '<option value="acme">' in html
-    assert '<option value="revysmc">' in html
+    assert '<option value="acme"' in html
+    assert '<option value="revysmc"' in html
 
 
-def test_scope_datalist_empty_when_no_clients(client, store, pool):
+def test_scope_select_only_placeholder_and_wildcard_when_no_clients(client, store):
     _admin(store, client)
-    pool.alert_clients = []
     html = client.get("/admin/users/new").get_data(as_text=True)
-    assert re.search(r'<datalist id="clients-datalist">\s*</datalist>', html)
+    assert '— select a client —' in html
+    assert '<option value="*"' in html
 
 
 def test_add_scope_row_script_and_template_present(client, store):
@@ -750,7 +730,9 @@ def test_user_form_has_csrf_token(client, store, url):
 # XSS safety
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("filename", ["users_list.html", "user_form.html", "password_result.html"])
+@pytest.mark.parametrize(
+    "filename", ["users_list.html", "user_form.html", "password_result.html", "clients_list.html", "client_form.html"]
+)
 def test_template_never_uses_safe_filter(filename):
     # A single |safe on the wrong variable would silently defeat Jinja's
     # default autoescaping for exactly the attacker-influenceable values
@@ -762,26 +744,24 @@ def test_template_never_uses_safe_filter(filename):
     assert "{% autoescape false %}" not in source
 
 
-def test_scope_datalist_html_escapes_malicious_client_name(client, store, pool):
-    # alerts.client is attacker-influenceable (any node-authenticated
-    # client can set an arbitrary "client" string on a POSTed alert --
-    # CLAUDE.md's payload schema only strips/lowercases it, no other
-    # sanitization) and _distinct_clients() feeds that value straight into
-    # this datalist's <option value="..."> -- a different trust boundary
-    # than Task 25's dashboard concern (alert CONTENT, never re-embedded
-    # into an HTML attribute). Confirms Jinja's default autoescaping
-    # neutralizes a breakout attempt rather than any bespoke sanitization
-    # this template would otherwise need to hand-roll.
+def test_scope_select_html_escapes_malicious_client_name(client, store):
+    # A malicious client name can't reach the registry through the real
+    # create_client() route (CLIENT_NAME_RE rejects it, same class of
+    # server-side constraint as USERNAME_RE below) -- seeded directly here,
+    # same defense-in-depth verification test_username_html_escapes_on_edit_page
+    # does for usernames, confirming this <select>'s <option value="..."> is
+    # never assumed safe (e.g. via |safe) independent of that invariant
+    # holding upstream.
     _admin(store, client)
     malicious = '"><script>alert(1)</script>'
-    pool.alert_clients = [malicious]
+    store.seed_client(malicious)
 
     html = client.get("/admin/users/new").get_data(as_text=True)
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
 
-def test_scope_row_client_value_html_escapes_on_edit_prepopulate(client, store, pool):
+def test_scope_row_client_value_html_escapes_on_edit_prepopulate(client, store):
     # Same trust boundary, different render path: an existing scope row's
     # client value (role_scopes.client, prepopulated on GET edit from
     # _role_scope_rows()) lands in a text <input value="...">, not just the
@@ -932,6 +912,8 @@ def test_edit_removing_first_of_three_scope_rows_preserves_survivors_end_to_end(
     # beta's and gamma's scopes correctly through the real admin route,
     # including add_scope/remove_scope calls against the FakeUserStore.
     _admin(store, client)
+    store.seed_client("beta")
+    store.seed_client("gamma")
     store.seed_user("bob", user_id=2)
     store.seed_scope("user:bob", "acme", "logs:read")
     store.seed_scope("user:bob", "beta", "alerts:write")

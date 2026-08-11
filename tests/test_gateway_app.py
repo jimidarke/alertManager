@@ -101,6 +101,10 @@ def test_create_app_registers_all_five_blueprints(config, mocker):
         "/admin/users/<username>/reset-password",
         "/admin/users/<username>/tokens/new",
         "/admin/users/<username>/tokens/<int:token_id>/revoke",
+        "/admin/clients",
+        "/admin/clients/new",
+        "/admin/clients/<name>/disable",
+        "/admin/clients/<name>/enable",
     }
 
 

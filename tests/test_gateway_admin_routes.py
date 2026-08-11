@@ -3,23 +3,18 @@ Tests for src/gateway/admin/routes.py (Task 23): the `admin` blueprint
 (`GET /admin/users`, `GET/POST /admin/users/new`,
 `GET/POST /admin/users/<username>/edit`,
 `POST .../disable|enable|reset-password`, `POST .../tokens/new`,
-`POST .../tokens/<id>/revoke`), wired through the real
-`create_app()` (so ProxyFix/CSRFProtect/blueprint registration are exactly
-what production gets), with Postgres/MQTT mocked exactly as
-tests/test_gateway_app.py establishes, a FakeUserStore swapped onto
-app.extensions afterward, and a FakePool bound directly to that same
-FakeUserStore instance. `_role_scope_rows()` (used to reconcile the
-personal per-user role's scope set on edit) reads through
+`POST .../tokens/<id>/revoke`, `GET /admin/clients`,
+`GET/POST /admin/clients/new`, `POST /admin/clients/<name>/disable|enable`),
+wired through the real `create_app()` (so ProxyFix/CSRFProtect/blueprint
+registration are exactly what production gets), with Postgres/MQTT mocked
+exactly as tests/test_gateway_app.py establishes and a FakeUserStore
+swapped onto app.extensions afterward. `_role_scope_rows()` (used to
+reconcile the personal per-user role's scope set on edit) reads through
 `UserStore.list_role_scopes()` -- i.e. through the SAME FakeUserStore
 instance, no separate fake needed -- per the final whole-branch review's
-"UserStore single owner" fix (this used to be a raw SQL read issued
-directly against `app.extensions['db_pool']`, alongside `_distinct_clients()`;
-only the latter still touches the pool directly now, for its `alerts.client`
-half only -- its `role_scopes.client` half also now reads through
-`UserStore.list_all_scope_clients()`). The FakePool/FakeCursor below answer
-only that one remaining alerts-only query. No live Postgres is available in
-this environment (and per project rule, docker/docker-compose is never
-invoked from automation).
+"UserStore single owner" fix. No live Postgres is available in this
+environment (and per project rule, docker/docker-compose is never invoked
+from automation).
 
 Covers, in priority order (per this task's brief):
 - THE guard-rail matrix (the highest bar here, same class of risk Task 22's
@@ -36,10 +31,12 @@ Covers, in priority order (per this task's brief):
   "password" form field has zero effect, a fresh value every request,
   Cache-Control: no-store on the one-time-reveal response.
 - CSRF requirement on every POST.
-- No delete route exists at all.
+- No delete route exists at all (users OR clients).
 - The personal-role scope reconciliation (add newly-checked scopes, remove
-  newly-unchecked ones) and the distinct-clients datalist query (including
-  graceful degradation to [] on a DB failure -- never blocks the form).
+  newly-unchecked ones) and the clients registry (sql/migrations/
+  0004_clients.sql): the /admin/clients CRUD routes, and create_user()/
+  update_user() rejecting a scope-row client or default_client that isn't
+  a registered, active client.
 """
 
 import sys
@@ -53,6 +50,7 @@ from gateway.config import GatewayConfig  # noqa: E402
 from userstore import (  # noqa: E402
     ALLOWED_PERMISSIONS,
     MASTER_ADMIN_ROLE,
+    ClientNotFoundError,
     PrincipalData,
     RoleNotFoundError,
     TokenNotFoundError,
@@ -77,9 +75,11 @@ class FakeUserStore:
         self._roles = {}  # role_name -> {"id", "name", "description", "is_system"}
         self._role_scopes = {}  # role_name -> set((client, permission))
         self._tokens = {}  # token_id -> dict (matches UserStore.list_tokens()'s row shape)
+        self._clients = {}  # name -> {"id", "name", "description", "status"}
         self._next_user_id = 1
         self._next_role_id = 1
         self._next_token_id = 1
+        self._next_client_id = 1
         self.calls = []  # [(method_name, args, kwargs), ...] -- exact-call-sequence assertions
 
     def _log(self, name, *args, **kwargs):
@@ -122,6 +122,15 @@ class FakeUserStore:
     def seed_scope(self, role_name, client, permission):
         self.seed_role(role_name)
         self._role_scopes.setdefault(role_name, set()).add((client.strip().lower(), permission))
+
+    def seed_client(self, name, *, status="active", description=None):
+        name = name.strip().lower()
+        if name in self._clients:
+            return self._clients[name]["id"]
+        cid = self._next_client_id
+        self._next_client_id += 1
+        self._clients[name] = {"id": cid, "name": name, "description": description, "status": status}
+        return cid
 
     def seed_token(self, name, username, *, status="active", expires_at=None, last_used_at=None, created_at=0):
         username = username.strip().lower()
@@ -251,12 +260,36 @@ class FakeUserStore:
         pairs = self._role_scopes.get(role_name, set()) if role_name else set()
         return [{"client": c, "permission": p} for c, p in sorted(pairs)]
 
-    def list_all_scope_clients(self):
-        self._log("list_all_scope_clients")
-        names = set()
-        for pairs in self._role_scopes.values():
-            names |= {c for c, _p in pairs if c not in (None, "", "*")}
-        return names
+    def list_clients(self, *, active_only=False):
+        self._log("list_clients", active_only=active_only)
+        rows = sorted(self._clients.values(), key=lambda c: c["name"])
+        return [dict(c) for c in rows if not active_only or c["status"] == "active"]
+
+    def get_client(self, name):
+        c = self._clients.get(name.strip().lower())
+        return dict(c) if c else None
+
+    def create_client(self, name, description=None, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        self._log("create_client", name, description=description, actor=actor, source_ip=source_ip)
+        cid = self._next_client_id
+        self._next_client_id += 1
+        self._clients[name] = {"id": cid, "name": name, "description": description, "status": "active"}
+        return cid
+
+    def disable_client(self, name, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        self._log("disable_client", name, actor=actor, source_ip=source_ip)
+        if name not in self._clients:
+            raise ClientNotFoundError(name)
+        self._clients[name]["status"] = "disabled"
+
+    def enable_client(self, name, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        self._log("enable_client", name, actor=actor, source_ip=source_ip)
+        if name not in self._clients:
+            raise ClientNotFoundError(name)
+        self._clients[name]["status"] = "active"
 
     def create_token(self, name, user_id, *, expires_at=None, actor=None, source_ip=None):
         self._log("create_token", name, user_id, expires_at=expires_at, actor=actor, source_ip=source_ip)
@@ -293,76 +326,6 @@ class FakeMqttPublisher:
         return True
 
 
-class FakeCursor:
-    """
-    Answers the ONE remaining raw-SQL shape admin/routes.py issues directly
-    against `app.extensions['db_pool']` -- `_distinct_clients()`'s
-    alerts-only `SELECT DISTINCT client FROM alerts ...` half of its
-    datalist query. The `role_scopes` half of that same datalist (and all
-    of `_role_scope_rows()`) now reads through
-    `UserStore.list_all_scope_clients()` / `UserStore.list_role_scopes()`
-    instead -- i.e. through FakeUserStore directly, not this fake cursor --
-    per the final whole-branch review's "UserStore single owner" fix. NOT a
-    general SQL engine, just enough pattern-matching for this one known
-    query. `getconn_exception`/`execute_exception` (set on the owning
-    FakePool) let tests exercise the "DB unavailable" degrade path.
-    """
-
-    def __init__(self, alert_clients, execute_exception=None):
-        self.alert_clients = alert_clients
-        self.execute_exception = execute_exception
-        self.executed = []
-        self._result = []
-
-    def execute(self, sql, params=None):
-        self.executed.append((sql, params))
-        if self.execute_exception is not None:
-            raise self.execute_exception
-        if "FROM alerts" in sql:
-            self._result = [{"client": c} for c in sorted(set(self.alert_clients))]
-        else:
-            raise AssertionError(f"FakeCursor got an unrecognized query: {sql}")
-
-    def fetchall(self):
-        return self._result
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-
-class FakeConnection:
-    def __init__(self, cursor):
-        self._cursor = cursor
-
-    def cursor(self, cursor_factory=None):
-        return self._cursor
-
-    def rollback(self):
-        pass
-
-
-class FakePool:
-    def __init__(self, store, alert_clients=None, getconn_exception=None, execute_exception=None):
-        self.store = store
-        self.alert_clients = alert_clients or []
-        self.getconn_exception = getconn_exception
-        self.execute_exception = execute_exception
-        self.putconn_calls = []
-        self.last_cursor = None
-
-    def getconn(self):
-        if self.getconn_exception is not None:
-            raise self.getconn_exception
-        self.last_cursor = FakeCursor(self.alert_clients, execute_exception=self.execute_exception)
-        return FakeConnection(self.last_cursor)
-
-    def putconn(self, conn):
-        self.putconn_calls.append(conn)
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -395,13 +358,6 @@ def store(app) -> FakeUserStore:
 @pytest.fixture(autouse=True)
 def mqtt(app):
     app.extensions["mqtt_publisher"] = FakeMqttPublisher()
-
-
-@pytest.fixture(autouse=True)
-def pool(app, store):
-    fake_pool = FakePool(store)
-    app.extensions["db_pool"] = fake_pool
-    return fake_pool
 
 
 @pytest.fixture
@@ -893,6 +849,7 @@ def test_edit_invalid_permission_rejected(client, store):
 
 def test_create_with_scope_row_creates_personal_role_and_grants_it(client, store):
     _admin(store, client)
+    store.seed_client("acme")
     resp = _post(
         client, "/admin/users/new",
         {"username": "scoped", "scope_client": ["acme"], "scope_permissions_0": ["logs:read", "alerts:write"]},
@@ -916,6 +873,7 @@ def test_create_without_scope_rows_never_creates_a_personal_role(client, store):
 
 def test_edit_adds_new_scope_and_removes_unchecked_scope(client, store):
     _admin(store, client)
+    store.seed_client("acme")
     store.seed_user("bob", user_id=2)
     store.seed_scope("user:bob", "acme", "logs:read")
     store._user_roles["bob"].add("user:bob")
@@ -938,6 +896,7 @@ def test_edit_adds_new_scope_and_removes_unchecked_scope(client, store):
 
 def test_edit_unchanged_scopes_are_not_touched(client, store):
     _admin(store, client)
+    store.seed_client("acme")
     store.seed_user("bob", user_id=2)
     store.seed_scope("user:bob", "acme", "logs:read")
     store._user_roles["bob"].add("user:bob")
@@ -982,6 +941,7 @@ def test_edit_revoking_empty_personal_role_is_a_noop_when_it_never_existed(clien
 
 def test_get_edit_form_prepopulates_existing_scopes(client, store):
     _admin(store, client)
+    store.seed_client("acme")
     store.seed_user("bob", user_id=2)
     store.seed_scope("user:bob", "acme", "logs:read")
     store._user_roles["bob"].add("user:bob")
@@ -1004,13 +964,15 @@ def test_personal_role_never_shown_as_selectable_role_checkbox(client, store):
 
 
 # ---------------------------------------------------------------------------
-# Distinct-clients datalist query
+# Clients registry (sql/migrations/0004_clients.sql) feeding the user form's
+# Default client / Scope client <select> options -- supersedes the former
+# best-effort "distinct clients" datalist now that there's a real registry.
 # ---------------------------------------------------------------------------
 
-def test_datalist_unions_alert_clients_and_role_scope_clients(client, store, pool):
+def test_user_form_offers_registered_active_clients_as_select_options(client, store):
     _admin(store, client)
-    store.seed_scope("acme-viewer", "acme", "logs:read")
-    pool.alert_clients = ["revysmc", "acme"]
+    store.seed_client("acme")
+    store.seed_client("revysmc")
 
     resp = client.get("/admin/users/new")
     assert resp.status_code == 200
@@ -1019,53 +981,63 @@ def test_datalist_unions_alert_clients_and_role_scope_clients(client, store, poo
     assert 'value="revysmc"' in body
 
 
-def test_datalist_excludes_wildcard_sentinel(client, store, pool):
-    # '*' is a real permission checkbox value (ALLOWED_PERMISSIONS includes
-    # it) but must never appear as a suggested CLIENT in the datalist --
-    # check the <option> element specifically, not any 'value="*"'
-    # substring (a permission checkbox legitimately has one).
+def test_user_form_excludes_disabled_clients(client, store):
     _admin(store, client)
-    store.seed_scope(MASTER_ADMIN_ROLE, "*", "*")
+    store.seed_client("acme")
+    store.seed_client("retired-client", status="disabled")
+
     resp = client.get("/admin/users/new")
     body = resp.get_data(as_text=True)
-    assert '<option value="*">' not in body
+    assert 'value="acme"' in body
+    assert 'value="retired-client"' not in body
 
 
-def test_datalist_degrades_to_empty_on_db_failure_does_not_break_form(client, store, app):
+def test_user_form_reads_clients_via_userstore_list_clients(client, store):
     _admin(store, client)
-    app.extensions["db_pool"] = FakePool(store, getconn_exception=RuntimeError("connection refused"))
-    resp = client.get("/admin/users/new")
-    assert resp.status_code == 200
-
-
-def test_distinct_clients_reads_role_scopes_via_userstore_not_raw_sql(client, store, pool):
-    # Final whole-branch review's "UserStore single owner" fix: the
-    # role_scopes half of the datalist must read through
-    # UserStore.list_all_scope_clients(), never a raw SQL query against
-    # app.extensions['db_pool'] (FakeCursor above would raise an
-    # AssertionError if it ever received a role_scopes-shaped query --
-    # this test additionally confirms the UserStore method is the one
-    # actually called, not merely that the pool wasn't touched for it).
-    _admin(store, client)
-    store.seed_scope("acme-viewer", "acme", "logs:read")
+    store.seed_client("acme")
 
     resp = client.get("/admin/users/new")
     assert resp.status_code == 200
-    assert len(store.calls_named("list_all_scope_clients")) >= 1
+    assert len(store.calls_named("list_clients")) >= 1
 
 
-def test_distinct_clients_alert_pool_failure_does_not_hide_scope_clients(client, store, app):
-    # The two halves of the datalist now come from two different, unrelated
-    # data sources (the pool for alerts.client, UserStore for
-    # role_scopes.client) and must degrade INDEPENDENTLY -- an alerts-pool
-    # outage must not also blank out clients that came from UserStore.
+def test_create_rejects_scope_row_with_unregistered_client(client, store):
     _admin(store, client)
-    store.seed_scope("acme-viewer", "acme", "logs:read")
-    app.extensions["db_pool"] = FakePool(store, getconn_exception=RuntimeError("connection refused"))
+    resp = _post(
+        client, "/admin/users/new",
+        {"username": "newbie", "scope_client": ["ghost-client"], "scope_permissions_0": ["logs:read"]},
+    )
+    assert resp.status_code == 400
+    assert store.get_user("newbie") is None
 
-    resp = client.get("/admin/users/new")
+
+def test_create_rejects_default_client_not_registered(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/users/new", {"username": "newbie", "default_client": "ghost-client"})
+    assert resp.status_code == 400
+    assert store.get_user("newbie") is None
+
+
+def test_create_accepts_wildcard_scope_client_without_registry_check(client, store):
+    # '*' is never a `clients` table row -- it stays exempt from the
+    # registry check, exactly like the pre-existing permission/authz model.
+    _admin(store, client)
+    resp = _post(
+        client, "/admin/users/new",
+        {"username": "adminish", "scope_client": ["*"], "scope_permissions_0": ["*"]},
+    )
     assert resp.status_code == 200
-    assert 'value="acme"' in resp.get_data(as_text=True)
+    assert store.get_principal("adminish").scopes["*"] == frozenset({"*"})
+
+
+def test_edit_rejects_scope_row_with_unregistered_client(client, store):
+    _admin(store, client)
+    store.seed_user("bob", user_id=2)
+    resp = _post(
+        client, "/admin/users/bob/edit",
+        {"roles": [], "scope_client": ["ghost-client"], "scope_permissions_0": ["logs:read"]},
+    )
+    assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -1261,3 +1233,130 @@ def test_no_token_delete_route_exists(client, store):
     _admin(store, client)
     rules = {r.rule for r in client.application.url_map.iter_rules()}
     assert not any("/tokens/" in rule and "delete" in rule for rule in rules)
+
+
+# ---------------------------------------------------------------------------
+# /admin/clients -- the clients registry admin UI (sql/migrations/
+# 0004_clients.sql): GET list, GET/POST new, POST disable/enable. Same
+# master_admin/CSRF/400-re-render conventions as every route above; no
+# self-lockout-style guard rail (a client has no "self" concept).
+# ---------------------------------------------------------------------------
+
+def test_list_clients_redirects_anonymous_browser_request(client):
+    resp = client.get("/admin/clients")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].startswith("/login")
+
+
+def test_list_clients_403_for_non_master_admin(client, store):
+    uid = store.seed_user("bob", roles=set())
+    _login_session(client, uid, "bob")
+    resp = client.get("/admin/clients")
+    assert resp.status_code == 403
+
+
+def test_list_clients_200_for_master_admin(client, store):
+    _admin(store, client)
+    resp = client.get("/admin/clients")
+    assert resp.status_code == 200
+
+
+def test_list_clients_shows_name_description_status(client, store):
+    _admin(store, client)
+    store.seed_client("acme", description="Acme Corp")
+    store.seed_client("retired-client", status="disabled")
+
+    resp = client.get("/admin/clients")
+    body = resp.get_data(as_text=True)
+    assert "acme" in body
+    assert "Acme Corp" in body
+    assert "retired-client" in body
+
+
+def test_create_client_valid_name_succeeds(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/new", {"name": "acme", "description": "Acme Corp"})
+    assert resp.status_code == 302
+    row = store.get_client("acme")
+    assert row is not None
+    assert row["description"] == "Acme Corp"
+    assert row["status"] == "active"
+
+
+def test_create_client_normalizes_name(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/new", {"name": "  ACME  "})
+    assert resp.status_code == 302
+    assert store.get_client("acme") is not None
+
+
+def test_create_client_rejects_invalid_name(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/new", {"name": "has space"})
+    assert resp.status_code == 400
+    assert store.get_client("has space") is None
+
+
+def test_create_client_rejects_duplicate_name(client, store):
+    _admin(store, client)
+    store.seed_client("acme")
+    resp = _post(client, "/admin/clients/new", {"name": "acme"})
+    assert resp.status_code == 400
+
+
+def test_create_client_rejects_literal_wildcard_name(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/new", {"name": "*"})
+    assert resp.status_code == 400
+    assert store.get_client("*") is None
+
+
+def test_create_client_post_without_csrf_token_is_400(client, store):
+    _admin(store, client)
+    resp = client.post("/admin/clients/new", data={"name": "acme"})
+    assert resp.status_code == 400
+    assert store.get_client("acme") is None
+
+
+def test_disable_client_succeeds(client, store):
+    _admin(store, client)
+    store.seed_client("acme")
+    resp = _post(client, "/admin/clients/acme/disable")
+    assert resp.status_code == 302
+    assert store.get_client("acme")["status"] == "disabled"
+
+
+def test_disable_client_404_for_unknown_client(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/ghost/disable")
+    assert resp.status_code == 404
+
+
+def test_enable_client_succeeds(client, store):
+    _admin(store, client)
+    store.seed_client("acme", status="disabled")
+    resp = _post(client, "/admin/clients/acme/enable")
+    assert resp.status_code == 302
+    assert store.get_client("acme")["status"] == "active"
+
+
+def test_enable_client_404_for_unknown_client(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/ghost/enable")
+    assert resp.status_code == 404
+
+
+def test_disable_client_post_without_csrf_token_is_400(client, store):
+    _admin(store, client)
+    store.seed_client("acme")
+    resp = client.post("/admin/clients/acme/disable", data={})
+    assert resp.status_code == 400
+    assert store.get_client("acme")["status"] == "active"
+
+
+def test_no_delete_route_exists_for_clients(client, store):
+    _admin(store, client)
+    rules = {r.rule for r in client.application.url_map.iter_rules()}
+    assert not any("delete" in rule for rule in rules if "/admin/clients" in rule)
+    resp = _post(client, "/admin/clients/acme/delete")
+    assert resp.status_code == 404

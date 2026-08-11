@@ -22,11 +22,19 @@
     - scope_rows: list[(client: str, permissions: list[str])] -- always at
       least one row (routes.py guarantees `[("", [])]` when there's
       nothing else to show), grouped in submission/first-seen order.
-    - clients: list[str] from _distinct_clients() (alerts.client UNION
-      role_scopes.client, '*' sentinel excluded) -- the scope-row
-      datalist's suggestion values. Best-effort data (degrades to [] on a
-      DB failure server-side); this template just renders whatever list it
-      gets, empty or not.
+    - clients: list[str] from _active_client_names() (UserStore.list_clients
+      (active_only=True), sorted by name) -- the registered, active clients
+      (sql/migrations/0004_clients.sql) offered as <select> options for
+      both the Default client field and every scope row's client field.
+      The `'*'` wildcard is never in this list (it's not a `clients` table
+      row) -- it's a separate, hardcoded <option> in both selects instead.
+      A scope row whose CURRENT client isn't in this list (e.g. it was
+      since disabled) still gets its own <option> injected so the existing
+      value stays visible/selected rather than silently vanishing -- see
+      the scope-row markup below.
+    - default_client: the currently-set/submitted default_client value (or
+      None) -- which <option> should render `selected` on a fresh "edit"
+      GET (not applicable -- see below) or a "new" 400 re-render.
     - allowed_permissions: sorted list[str] -- userstore.ALLOWED_PERMISSIONS,
       the fixed permission-checkbox set for every scope row.
     - default_scope_permissions: a set[str] (currently {"logs:read"}) --
@@ -84,10 +92,6 @@
   <div class="flash flash-error" role="alert">{{ error }}</div>
   {% endif %}
 
-  <datalist id="clients-datalist">
-    {% for client in clients %}<option value="{{ client }}">{% endfor %}
-  </datalist>
-
   <form method="post" action="{{ url_for('admin.create_user') if mode == 'new' else url_for('admin.update_user', username=username) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -102,7 +106,10 @@
 
     <div class="form-group">
       <label for="user-form-default-client">Default client <span class="tiny">(optional)</span></label>
-      <input type="text" id="user-form-default-client" name="default_client" list="clients-datalist" autocomplete="off">
+      <select id="user-form-default-client" name="default_client">
+        <option value="">— none —</option>
+        {% for c in clients %}<option value="{{ c }}" {% if c == default_client %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
       <small>Inherited by alerts this user submits without an explicit "client" field.</small>
     </div>
 
@@ -173,7 +180,14 @@
         {% for client, permissions in scope_rows %}
         {% set row_index = loop.index0 %}
         <div class="scope-row">
-          <input type="text" name="scope_client" list="clients-datalist" value="{{ client }}" placeholder="client (or * for all)">
+          <select name="scope_client">
+            <option value="" disabled {% if not client %}selected{% endif %}>— select a client —</option>
+            <option value="*" {% if client == '*' %}selected{% endif %}>* (all clients)</option>
+            {% for c in clients %}<option value="{{ c }}" {% if c == client %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            {% if client and client != '*' and client not in clients %}
+            <option value="{{ client }}" selected>{{ client }} (inactive/unregistered)</option>
+            {% endif %}
+          </select>
           <div class="tag-group">
             {% for permission in allowed_permissions %}
             <label>
@@ -269,7 +283,11 @@
        percent syntax is deliberately avoided above for that reason.) -->
   <template id="scope-row-template">
     <div class="scope-row">
-      <input type="text" name="scope_client" list="clients-datalist" placeholder="client (or * for all)">
+      <select name="scope_client">
+        <option value="" selected disabled>— select a client —</option>
+        <option value="*">* (all clients)</option>
+        {% for c in clients %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
       <div class="tag-group">
         {% for permission in allowed_permissions %}
         <label>
