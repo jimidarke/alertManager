@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [3.1.2] - 2026-08-10
+
+### Added
+- **Clients registry** (`sql/migrations/0004_clients.sql`) -- promotes `client` from free
+  text to an admin-managed registry. New `master_admin`-only admin UI at `/admin/clients`
+  (list, create, disable/enable); `POST /alert` and scope grants now validate the
+  effective client against the registry (`UserStore.client_exists()`), with the `'*'`
+  wildcard remaining a Python-layer special case. Enforcement is app-layer only --
+  `alerts.client` and `role_scopes.client` columns are untouched. Documented in
+  `docs/CLIENTNODE.md`.
+- **Linux health agent** (`clients/linux-agent/`) -- self-contained bash agent
+  (`alert-agent.sh`) that reports disk/load/memory thresholds, kernel log events, and a
+  heartbeat to `POST /alert` via Bearer token or Basic auth, with local spool/retry across
+  gateway outages. Ships README, `alert-agent.env.example`, and the design plan
+  (`docs/plans/LINUX_HEALTH_AGENT_PLAN.md`).
+
 ## [3.1.1] - 2026-08-09
 
 Documentation-only release. Several guides still described the pre-v2.0.0 world -- a
