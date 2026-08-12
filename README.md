@@ -1,6 +1,6 @@
 # Alert Manager
 
-![Version](https://img.shields.io/badge/version-3.1.1-blue.svg)
+![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 
@@ -394,6 +394,7 @@ The web dashboard (`/dashboard`) and streaming log viewer (`/logs`) provide the 
 - **[docs/CLIENTNODE.md](docs/CLIENTNODE.md)** - Client integration guide (payload contract, credential rotation)
 - **[docs/ALERT_PAYLOAD_SPEC.md](docs/ALERT_PAYLOAD_SPEC.md)** - Complete payload specification with validation rules
 - **[sdk/python/README.md](sdk/python/README.md)** - Python SDK usage
+- **[skills/alert-manager/](skills/alert-manager/)** - Claude Code skill: teaches an LLM agent the payload contract, SDK, and linux-agent so it can integrate correctly on the first try (`install.sh` copies it into `~/.claude/skills/`)
 - **[sample-payload/](sample-payload/)** - JSON payload reference examples
 
 **Operations & architecture**

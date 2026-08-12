@@ -202,6 +202,16 @@ debounced threshold alerts for disk/load/memory, container state changes, and ne
 warnings/errors. Configuration is one dotenv file (`ALERT_URL`, `ALERT_CLIENT`, `ALERT_TOKEN`);
 see its [README](../clients/linux-agent/README.md) for install and provisioning.
 
+### Claude Code skill (turn-key, for LLM agents)
+
+If an LLM coding agent (e.g. Claude Code) is doing the integration work,
+point it at [`skills/alert-manager/`](../skills/alert-manager/) instead of
+this document directly. It's a packaged Agent Skill covering everything on
+this page plus the SDK and the linux health agent above, with the gotchas
+that most often produce a silent failure called out explicitly.
+`skills/alert-manager/install.sh` copies it into `~/.claude/skills/` (every
+Claude Code session on the machine) or a single project's `.claude/skills/`.
+
 ### Python — SDK (recommended)
 
 **Install** — the SDK lives in this repository under [`sdk/python/`](../sdk/python/) and can be installed straight from GitHub:
@@ -337,3 +347,4 @@ if you are building a sign, not a sender.
 | `AUTH.md` | Auth model: sessions, RBAC roles/scopes, tokens, lockout |
 | `ALERT_PAYLOAD_SPEC.md` | Extended payload specification |
 | [`clients/linux-agent/README.md`](../clients/linux-agent/README.md) | Turn-key Linux host/Docker health agent |
+| [`skills/alert-manager/`](../skills/alert-manager/) | Claude Code Agent Skill for LLM agents integrating with this service |

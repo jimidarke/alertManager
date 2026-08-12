@@ -135,6 +135,11 @@ docker logs mqtt-broker
 - **Function**: Scheduled log analysis and email reports
 - **Profile**: `analytics`
 
+### URL Monitor
+- **Image**: `alert-router:latest` (reuses same image)
+- **Function**: Polls configured URLs (headers-only GET) and publishes uptime/latency alerts to `alerts/input`
+- **Profile**: `secondary`
+
 ## 🏠 Physical Device Controllers (Not Dockerized)
 
 Physical devices connect directly to `alert.d-t.pw:42690` and subscribe to specific topics:

@@ -175,6 +175,30 @@
       }
     }
   },
+  "url_monitor": {
+    "enabled": true,
+    "mqtt": {
+      "broker": "mqtt-broker",
+      "port": 1883,
+      "topic": "alerts/input"
+    },
+    "defaults": {
+      "interval_seconds": 60,
+      "timeout_seconds": 5,
+      "max_response_ms": 200,
+      "expected_status": 200,
+      "follow_redirects": false,
+      "reminder_interval_seconds": 43200
+    },
+    "urls": [
+      {
+        "name": "example-site",
+        "url": "https://www.example.com/",
+        "client": "acme-co",
+        "max_response_ms": 500
+      }
+    ]
+  },
   "pathways": {
     "console_alerts": {
       "type": "console",

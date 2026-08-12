@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+## [3.2.0] - 2026-08-12
+
+### Added
+- **Claude Code skill** (`skills/alert-manager/`) -- a packaged Agent Skill (`SKILL.md` +
+  `references/` + `scripts/send-alert.sh`) that teaches an LLM agent the payload contract,
+  auth/provisioning model, Python SDK, and `clients/linux-agent`, with the gotchas that most
+  often cause a silent failure (two-stage validation, millisecond timestamps, the client
+  registry's no-CLI trap) called out explicitly. `install.sh` copies it into
+  `~/.claude/skills/` (or `$CLAUDE_SKILLS_DIR`) either from a local checkout or standalone via
+  a sparse `git clone`; re-running the same command is also how it's updated -- no
+  auto-updater by design. Cross-linked from `docs/CLIENTNODE.md` and `README.md`.
+- **URL Monitor** (`src/url_monitor.py`) -- standalone alert-producer service, modeled on
+  `src/feed_aggregator.py`, that polls a server-configured list of URLs (headers-only GET,
+  body never read) and tracks per-URL health as an OK/DEGRADED/DOWN state machine. Emits
+  `debug` heartbeats while healthy, `warning`/`critical` on state changes, `notice` on
+  recovery with outage duration, and a 12-hour "STILL DOWN"/"STILL DEGRADED" reminder while
+  unhealthy so long outages aren't forgotten. Configured under the `url_monitor` key with
+  global defaults overridable per URL; state is in-memory only (lost on restart). New
+  `url-monitor` Docker service under the `secondary` profile with heartbeat-based
+  healthcheck. See `docs/URL_MONITOR_PLAN.md` for the full design. Future extension
+  candidates (not implemented): TLS-certificate-expiry checks, content/keyword assertions.
 
 ## [3.1.2] - 2026-08-10
 

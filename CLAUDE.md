@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Alert Manager - Technical Reference
 
-**Version:** 3.1.1
-**Last Updated:** 2026-08-09
+**Version:** 3.2.0
+**Last Updated:** 2026-08-12
 
 ## Project Purpose
 
@@ -21,6 +21,7 @@ The Alert Manager captures JSON alert payloads via HTTPS (`POST /alert`, the sol
 - **`data/config/docker.json` in git is a sanitized template.** The real production copy lives server-side only (`/opt/docker/alert-manager`) with real recipient emails and client names — never overwrite it with the repo copy on deploy, and never copy its real values back into git.
 - `.claude/` is gitignored (local settings stay local).
 - The Python SDK is public-installable: `pip install "git+https://github.com/jimidarke/alertManager.git#subdirectory=sdk/python"` (documented in `docs/CLIENTNODE.md`).
+- **`skills/alert-manager/`** is a Claude Code Agent Skill (`SKILL.md` + `references/` + `scripts/send-alert.sh`) that teaches an LLM agent the payload contract, auth model, SDK, and `clients/linux-agent` so it integrates correctly on the first try. It's tracked source, not itself auto-loaded -- `skills/alert-manager/install.sh` copies it into `~/.claude/skills/` (or `$CLAUDE_SKILLS_DIR`) to activate it; re-running that script is also how it's updated (no auto-updater by design). A gitignored `.claude/skills/alert-manager` symlink in this repo points at the tracked source for local dev-loop testing.
 
 ## Core Architecture
 
@@ -42,6 +43,14 @@ Pathways are loaded by `pathways/pathway_manager.py` (`PathwayManager`) and inst
 - Configured under the `feed_aggregator` key in the service config; client name defaults to `feed-updates`
 - On fetch failure: retry once, then emit a warning alert and skip the cycle
 - See `src/feeds/README.md` for adding new feeds
+
+### URL Monitor (Content Source, not a pathway)
+`src/url_monitor.py` is a standalone service that *produces* alerts rather than consuming them, modeled directly on `src/feed_aggregator.py`. It polls a server-configured list of URLs on independent APScheduler interval jobs -- a headers-only HTTP GET (`stream=True`, body never read) -- and tracks per-URL health as an in-memory OK/DEGRADED/DOWN state machine, publishing alerts (`category: application`) to MQTT `alerts/input` for normal routing:
+- Healthy polls emit `debug` each cycle (routed to per-client file logs only, effectively invisible); a state change to DEGRADED (wrong status or slow response) emits `warning`; a state change to DOWN (timeout, DNS failure, connection refused, TLS error) emits `critical`; recovery (any unhealthy state -> OK) emits `notice` with the outage duration.
+- While a URL stays unhealthy, a reminder alert re-fires every 12 hours (configurable) so long outages aren't forgotten, titled "STILL DOWN"/"STILL DEGRADED".
+- Configured under the `url_monitor` key; global `defaults` (`interval_seconds`, `timeout_seconds`, `max_response_ms`, `expected_status`, `follow_redirects`, `reminder_interval_seconds`) are overridable per URL entry. Each URL entry requires `name`, `url`, `client`.
+- State is in-memory only -- a restart forgets prior history and treats every URL as first-seen on its next poll.
+- Deployment: Docker profile `secondary`, healthcheck via `src/utils/heartbeat.py` (`HEARTBEAT_FILE`), same pattern as `analytics-engine`. See `docs/URL_MONITOR_PLAN.md` for the full design.
 
 ### Routing Logic
 - Configuration-driven routing in JSON config files
@@ -400,7 +409,7 @@ Services attach to the **external** Docker network `WebApps` (`docker network cr
 | Profile | Services |
 |---------|----------|
 | `primary` | `file-logger`, `http-gateway` |
-| `secondary` | `feed-aggregator` |
+| `secondary` | `feed-aggregator`, `url-monitor` |
 | `analytics` | `analytics-engine` |
 | `deprecated` | `syslog-gateway`, `snmp-gateway` (do not enable) |
 
