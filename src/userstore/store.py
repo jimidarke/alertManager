@@ -112,6 +112,11 @@ ALLOWED_PERMISSIONS = frozenset({"*", "logs:read", "alerts:write"})
 
 MASTER_ADMIN_ROLE = "master_admin"
 
+# Per-user ad-hoc scope-holder role name prefix ("user:<username>"). Owned here
+# (not just by the gateway admin routes) because delete_user() must remove the
+# user's personal role along with the user.
+PERSONAL_ROLE_PREFIX = "user:"
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -542,18 +547,24 @@ class UserStore:
 
     def delete_user(self, username: str, *, actor: Optional[str] = None, source_ip: Optional[str] = None) -> None:
         """
-        Permanently delete a user (user_roles rows cascade; any auth_tokens
-        row still referencing this user blocks the delete with a raw
-        psycopg2 IntegrityError -- ON DELETE RESTRICT, by design, per
-        sql/migrations/0002_identity.sql's auth_tokens.user_id comment:
-        tokens must be explicitly revoked/cleaned up first). Not caught
-        here -- fail fast, per CLAUDE.md.
+        Permanently delete a user in one transaction: their auth_tokens rows
+        (revoked ones included -- auth_tokens.user_id is ON DELETE RESTRICT,
+        so they must go first), their personal `user:<name>` role (cascades
+        its role_scopes and user_roles rows; left behind it would collide
+        with a re-created user of the same name), then the users row itself
+        (remaining user_roles rows cascade). auth_audit.username has no FK,
+        so history survives; alerts and logs are never touched.
         """
         username_norm = _normalize_username(username)
         with self._cursor() as cur:
-            cur.execute("DELETE FROM users WHERE username = %s RETURNING id", (username_norm,))
-            if cur.fetchone() is None:
+            cur.execute("SELECT id FROM users WHERE username = %s", (username_norm,))
+            row = cur.fetchone()
+            if row is None:
                 raise UserNotFoundError(username_norm)
+            user_id = row["id"]
+            cur.execute("DELETE FROM auth_tokens WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM roles WHERE name = %s", (f"{PERSONAL_ROLE_PREFIX}{username_norm}",))
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
             self._write_audit(cur, "user_deleted", username_norm, source_ip, _detail(actor))
 
     # -- login / principal / tokens -------------------------------------------
@@ -1049,6 +1060,20 @@ class UserStore:
             if cur.fetchone() is None:
                 raise ClientNotFoundError(name_norm)
             self._write_audit(cur, "client_enabled", None, source_ip, _detail(actor, client=name_norm))
+
+    def delete_client(self, name: str, *, actor: Optional[str] = None, source_ip: Optional[str] = None) -> None:
+        """
+        Remove a client from the registry. Only the registry row goes:
+        alerts, logs, role_scopes and users.default_client reference a
+        client by name string alone (no FK), so all collected data and any
+        scope still naming it are left untouched.
+        """
+        name_norm = _normalize_client(name)
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM clients WHERE name = %s RETURNING id", (name_norm,))
+            if cur.fetchone() is None:
+                raise ClientNotFoundError(name_norm)
+            self._write_audit(cur, "client_deleted", None, source_ip, _detail(actor, client=name_norm))
 
     # -- audit -------------------------------------------------------------
 

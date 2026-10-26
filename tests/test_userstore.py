@@ -410,6 +410,55 @@ def test_delete_user_raises_when_no_such_user(mocker, store):
         store.delete_user("ghost")
 
 
+def _executed_sql(cur):
+    return [c.args[0] for c in cur.execute.call_args_list]
+
+
+def test_delete_user_removes_tokens_personal_role_then_user_and_audits(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"id": 7}
+
+    store.delete_user("Alice", actor="root", source_ip="1.2.3.4")
+
+    calls = cur.execute.call_args_list
+    sql = _executed_sql(cur)
+    assert sql[0].startswith("SELECT id FROM users")
+    assert sql[1] == "DELETE FROM auth_tokens WHERE user_id = %s"
+    assert calls[1].args[1] == (7,)
+    assert sql[2] == "DELETE FROM roles WHERE name = %s"
+    assert calls[2].args[1] == ("user:alice",)
+    assert sql[3] == "DELETE FROM users WHERE id = %s"
+    assert calls[3].args[1] == (7,)
+    assert "auth_audit" in sql[4]
+    assert calls[4].args[1][1:4] == ("user_deleted", "alice", "1.2.3.4")
+
+
+def test_delete_client_removes_registry_row_only_and_audits(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = {"id": 3}
+
+    store.delete_client("Acme-Co", actor="root", source_ip="1.2.3.4")
+
+    calls = cur.execute.call_args_list
+    sql = _executed_sql(cur)
+    assert sql[0] == "DELETE FROM clients WHERE name = %s RETURNING id"
+    assert calls[0].args[1] == ("acme-co",)
+    # Nothing else is deleted: alerts/role_scopes/users reference clients by string only.
+    assert len([q for q in sql if q.startswith("DELETE")]) == 1
+    assert calls[1].args[1][1] == "client_deleted"
+
+
+def test_delete_client_raises_when_no_such_client(mocker, store):
+    mock_conn = _patch_connect(mocker)
+    cur = _mock_cursor(mocker, mock_conn)
+    cur.fetchone.return_value = None
+
+    with pytest.raises(ClientNotFoundError):
+        store.delete_client("ghost")
+
+
 # -- verify_login: lockout state machine ------------------------------------
 
 

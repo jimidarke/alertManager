@@ -46,7 +46,7 @@
 
     /* Text */
     --text-primary: #d4d4d4;
-    --text-secondary: #858585;
+    --text-secondary: #a3a3a3;
     --text-title: #ffffff;
     --text-header: #007acc;
     --text-value: #4ec9b0;
@@ -175,7 +175,7 @@ small, .caption {
 
 .tiny, .version {
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.4;
 }
 
@@ -713,7 +713,7 @@ legend {
 .time-absolute {
     display: block;
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
 }
 
 /* ============================================
@@ -809,4 +809,128 @@ legend {
     .page-content {
         padding: var(--spacing-md);
     }
+}
+
+
+/* ============================================
+   Buttons rendered as <a>: keep their own colors after a visit (a:visited
+   alone is more specific than .btn-*) and never underline on hover.
+   ============================================ */
+a.btn:hover {
+    text-decoration: none;
+}
+
+a.btn-primary:visited {
+    color: #ffffff;
+}
+
+a.btn-secondary:visited {
+    color: var(--text-primary);
+}
+
+.btn-danger {
+    background: transparent;
+    color: var(--level-critical);
+    border: 1px solid var(--level-critical);
+}
+
+.btn-danger:hover {
+    background: var(--level-critical-bg);
+}
+
+a.btn-danger:visited {
+    color: var(--level-critical);
+}
+
+/* ============================================
+   Admin tables (admin/users_list.html, admin/clients_list.html): larger
+   type, roomier rows, scope chips instead of run-on text.
+   ============================================ */
+.admin-table {
+    font-size: 15px;
+}
+
+.admin-table thead th {
+    font-size: 13px;
+}
+
+.admin-table tbody td {
+    padding: var(--spacing-md);
+    vertical-align: top;
+}
+
+.admin-table tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-table tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.admin-table .badge,
+.admin-table .status-pill {
+    font-size: 12px;
+}
+
+.admin-table .username {
+    font-weight: 600;
+}
+
+.admin-table .row-actions button,
+.admin-table .row-actions .btn {
+    font-size: 13px;
+    padding: 6px 12px;
+}
+
+/* Status pill: muted pair, same vocabulary as .badge-*. */
+.admin-table .status-active {
+    background: var(--level-debug-bg);
+    color: #89d185;
+}
+
+.admin-table .status-disabled {
+    background: var(--level-critical-bg);
+    color: var(--level-critical);
+}
+
+/* One line per client; the client is a mono chip, permissions are badges. */
+.scope-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.scope-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-xs) var(--spacing-sm);
+}
+
+.scope-client {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--bg-surface);
+    border-radius: 3px;
+    padding: 2px 8px;
+    color: var(--text-title);
+}
+
+.scope-client-all {
+    background: var(--level-warning-bg);
+    color: var(--level-warning);
+}
+
+.scope-perm {
+    font-size: 12px;
+    background: var(--level-info-bg);
+    color: var(--level-info);
+    border-radius: 3px;
+    padding: 2px 8px;
+    white-space: nowrap;
+}
+
+.scope-perm-all {
+    background: var(--level-critical-bg);
+    color: var(--level-critical);
 }

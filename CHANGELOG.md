@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-10-26
+
+### Added
+- **Delete users and clients from the admin UI** (`POST /admin/users/<username>/delete`,
+  `POST /admin/clients/<name>/delete`). A second step after disable: the routes refuse an
+  active account/client, the UI only shows Delete on disabled rows (with a confirm dialog),
+  and you cannot delete yourself. Deleting only removes the identity/registry rows --
+  alerts, logs, and `auth_audit` history are untouched (`user_deleted` / `client_deleted`
+  are audited). `UserStore.delete_client()` is new; `UserStore.delete_user()` now also
+  removes the user's tokens and personal `user:<name>` role in one transaction instead of
+  failing on `auth_tokens ON DELETE RESTRICT` (this also applies to `user-manager.py delete`).
+- Flash confirmation messages after user/client disable, enable, delete and client create.
+- Clients list shows a Created column.
+
+### Changed
+- Admin Users/Clients pages are easier to read: larger type, brighter secondary text
+  (`--text-secondary` #858585 -> #a3a3a3, now >= 4.5:1), scopes shown as per-client chips
+  with permission badges instead of run-on text, muted status pills, a red Delete button.
+
+### Fixed
+- Button-styled links (`+ New user`, `Edit`, ...) no longer turn purple/underlined after
+  being visited.
+
 ## [3.2.0] - 2026-08-12
 
 ### Added

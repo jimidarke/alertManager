@@ -291,6 +291,22 @@ class FakeUserStore:
             raise ClientNotFoundError(name)
         self._clients[name]["status"] = "active"
 
+    def delete_client(self, name, *, actor=None, source_ip=None):
+        name = name.strip().lower()
+        self._log("delete_client", name, actor=actor, source_ip=source_ip)
+        if name not in self._clients:
+            raise ClientNotFoundError(name)
+        del self._clients[name]
+
+    def delete_user(self, username, *, actor=None, source_ip=None):
+        username = username.strip().lower()
+        self._log("delete_user", username, actor=actor, source_ip=source_ip)
+        if username not in self._users:
+            raise UserNotFoundError(username)
+        uid = self._users.pop(username)["id"]
+        self._user_roles.pop(username, None)
+        self._tokens = {t: v for t, v in self._tokens.items() if v["user_id"] != uid}
+
     def create_token(self, name, user_id, *, expires_at=None, actor=None, source_ip=None):
         self._log("create_token", name, user_id, expires_at=expires_at, actor=actor, source_ip=source_ip)
         tid = self._next_token_id
@@ -500,15 +516,58 @@ def test_list_shows_real_roles_alongside_filtered_personal_role(client, store):
 
 
 # ---------------------------------------------------------------------------
-# No delete route
+# Delete user (disabled users only)
 # ---------------------------------------------------------------------------
 
-def test_no_delete_route_exists(client, store):
+def test_delete_disabled_user_removes_it_and_redirects(client, store):
+    _admin(store, client, username="root", user_id=1)
+    store.seed_user("bob", user_id=2, status="disabled")
+    store.seed_token("t1", "bob", status="revoked")
+    resp = _post(client, "/admin/users/bob/delete")
+    assert resp.status_code == 302
+    assert store.get_user("bob") is None
+    assert store.list_tokens() == []
+    (args, kwargs), = store.calls_named("delete_user")
+    assert args == ("bob",)
+    assert kwargs["actor"] == "root"
+
+
+def test_delete_active_user_is_400_and_leaves_it(client, store):
     _admin(store, client)
-    rules = {r.rule for r in client.application.url_map.iter_rules()}
-    assert not any("delete" in rule for rule in rules if "/admin/users" in rule)
+    store.seed_user("bob", user_id=2)
+    resp = _post(client, "/admin/users/bob/delete")
+    assert resp.status_code == 400
+    assert store.get_user("bob") is not None
+    assert store.calls_named("delete_user") == []
+
+
+def test_delete_self_is_400(client, store):
+    _admin(store, client, username="root", user_id=1)
     resp = _post(client, "/admin/users/root/delete")
+    assert resp.status_code == 400
+    assert store.get_user("root") is not None
+
+
+def test_delete_another_disabled_master_admin_succeeds(client, store):
+    _admin(store, client, username="root", user_id=1)
+    store.seed_user("root2", user_id=2, status="disabled", roles={MASTER_ADMIN_ROLE})
+    resp = _post(client, "/admin/users/root2/delete")
+    assert resp.status_code == 302
+    assert store.get_user("root2") is None
+
+
+def test_delete_404_for_unknown_user(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/users/ghost/delete")
     assert resp.status_code == 404
+
+
+def test_delete_user_without_csrf_token_is_400(client, store):
+    _admin(store, client)
+    store.seed_user("bob", user_id=2, status="disabled")
+    resp = client.post("/admin/users/bob/delete", data={})
+    assert resp.status_code == 400
+    assert store.get_user("bob") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1354,9 +1413,53 @@ def test_disable_client_post_without_csrf_token_is_400(client, store):
     assert store.get_client("acme")["status"] == "active"
 
 
-def test_no_delete_route_exists_for_clients(client, store):
+def test_delete_disabled_client_removes_it(client, store):
     _admin(store, client)
-    rules = {r.rule for r in client.application.url_map.iter_rules()}
-    assert not any("delete" in rule for rule in rules if "/admin/clients" in rule)
+    store.seed_client("acme", status="disabled")
     resp = _post(client, "/admin/clients/acme/delete")
+    assert resp.status_code == 302
+    assert store.get_client("acme") is None
+    (args, kwargs), = store.calls_named("delete_client")
+    assert args == ("acme",)
+    assert kwargs["actor"] == "root"
+
+
+def test_delete_active_client_is_400_and_leaves_it(client, store):
+    _admin(store, client)
+    store.seed_client("acme")
+    resp = _post(client, "/admin/clients/acme/delete")
+    assert resp.status_code == 400
+    assert store.get_client("acme") is not None
+    assert store.calls_named("delete_client") == []
+
+
+def test_delete_client_404_for_unknown(client, store):
+    _admin(store, client)
+    resp = _post(client, "/admin/clients/ghost/delete")
     assert resp.status_code == 404
+
+
+def test_delete_client_without_csrf_token_is_400(client, store):
+    _admin(store, client)
+    store.seed_client("acme", status="disabled")
+    resp = client.post("/admin/clients/acme/delete", data={})
+    assert resp.status_code == 400
+    assert store.get_client("acme") is not None
+
+
+def test_delete_requires_master_admin(client, store):
+    uid = store.seed_user("viewer", user_id=5)
+    _login_session(client, uid, "viewer")
+    store.seed_client("acme", status="disabled")
+    resp = _post(client, "/admin/clients/acme/delete")
+    assert resp.status_code in (302, 403)
+    assert store.get_client("acme") is not None
+
+
+def test_success_actions_flash_a_message(client, store):
+    _admin(store, client)
+    store.seed_client("acme", status="disabled")
+    resp = _post(client, "/admin/clients/acme/delete")
+    assert resp.status_code == 302
+    page = client.get("/admin/clients")
+    assert "Deleted client acme." in page.get_data(as_text=True)

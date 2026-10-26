@@ -52,7 +52,7 @@
   </div>
 
   <div class="table-wrap">
-    <table>
+    <table class="admin-table">
       <thead>
         <tr>
           <th>Username</th>
@@ -67,7 +67,7 @@
         {% for user in users %}
         <tr>
           <td>
-            <a href="{{ url_for('admin.edit_user_form', username=user.username) }}">{{ user.username }}</a>
+            <a class="username" href="{{ url_for('admin.edit_user_form', username=user.username) }}">{{ user.username }}</a>
             {% if user.id == current_user_id %}<span class="tiny">(you)</span>{% endif %}
           </td>
           <td>
@@ -84,7 +84,16 @@
           </td>
           <td>
             {% if user.scopes %}
-            {% for client, perms in user.scopes.items() %}{{ client }}: {{ perms | sort | join(', ') }}{% if not loop.last %}; {% endif %}{% endfor %}
+            <div class="scope-list">
+              {% for client, perms in user.scopes.items() | sort %}
+              <div class="scope-item">
+                <span class="scope-client{% if client == '*' %} scope-client-all{% endif %}">{{ 'all clients' if client == '*' else client }}</span>
+                {% for perm in perms | sort %}
+                <span class="scope-perm{% if perm == '*' %} scope-perm-all{% endif %}">{{ 'all permissions' if perm == '*' else perm }}</span>
+                {% endfor %}
+              </div>
+              {% endfor %}
+            </div>
             {% else %}
             <span class="tiny">-</span>
             {% endif %}
@@ -115,6 +124,13 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-secondary">Reset password</button>
               </form>
+              {% if user.status == 'disabled' and user.id != current_user_id %}
+              <form method="post" action="{{ url_for('admin.delete_user', username=user.username) }}" class="inline-form"
+                    data-confirm="Permanently delete user {{ user.username }}? Their tokens and scopes are removed. Alerts and logs are kept.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger">Delete</button>
+              </form>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -136,6 +152,13 @@
   // own createTimeCell convention, Task 25) rather than server-rendered.
   (function () {
     "use strict";
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        if (!window.confirm(form.getAttribute("data-confirm"))) {
+          event.preventDefault();
+        }
+      });
+    });
     var common = window.AlertManagerCommon;
     if (!common) {
       return;

@@ -96,7 +96,7 @@ docker run --rm -it --env-file .env <image> python3 tools/user-manager.py <comma
 | `show <username>` | One account's details |
 | `disable <username>` / `enable <username>` | Deactivate / reactivate an account (`enable` also clears lockout state) |
 | `unlock <username>` | Clear lockout state only (`failed_attempts=0`, `locked_until=NULL`) -- leaves `status` alone, so unlocking a disabled account keeps it disabled |
-| `delete <username>` | Permanently delete an account (blocked while it still owns any token -- revoke those first) |
+| `delete <username>` | Permanently delete an account, along with its tokens and personal `user:<name>` scope role (alerts, logs and audit history are kept) |
 | `create-role <name> [--description] [--is-system]` | Create a role |
 | `grant-role <username> <role>` / `revoke-role <username> <role>` | Assign/remove a role |
 | `add-scope <role> <client> <permission>` / `remove-scope <role> <client> <permission>` | Add/remove a `(client, permission)` grant on a role (`client`/`permission` may be `*`) |

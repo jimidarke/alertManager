@@ -32,24 +32,29 @@
   </div>
 
   <div class="table-wrap">
-    <table>
+    <table class="admin-table">
       <thead>
         <tr>
           <th>Name</th>
           <th>Description</th>
           <th>Status</th>
+          <th>Created</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for c in clients %}
         <tr>
-          <td>{{ c.name }}</td>
+          <td><span class="scope-client">{{ c.name }}</span></td>
           <td>
             {% if c.description %}{{ c.description }}{% else %}<span class="tiny">-</span>{% endif %}
           </td>
           <td>
             <span class="status-pill status-{{ c.status }}">{{ c.status }}</span>
+          </td>
+          <td>
+            <span class="time-relative" data-epoch="{{ c.created_at }}">-</span>
+            <span class="time-absolute" data-epoch="{{ c.created_at }}"></span>
           </td>
           <td>
             <div class="row-actions">
@@ -64,16 +69,57 @@
                 <button type="submit" class="btn btn-secondary">Enable</button>
               </form>
               {% endif %}
+              {% if c.status == 'disabled' %}
+              <form method="post" action="{{ url_for('admin.delete_client', name=c.name) }}" class="inline-form"
+                    data-confirm="Remove client {{ c.name }} from the registry? Alerts and logs are kept.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger">Delete</button>
+              </form>
+              {% endif %}
             </div>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="4" class="tiny">No clients registered yet.</td>
+          <td colspan="5" class="tiny">No clients registered yet.</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Delete confirmation + the relative/absolute created-at text (same
+  // client-side convention as users_list.html's last-login column).
+  (function () {
+    "use strict";
+    document.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        if (!window.confirm(form.getAttribute("data-confirm"))) {
+          event.preventDefault();
+        }
+      });
+    });
+    var common = window.AlertManagerCommon;
+    if (!common) {
+      return;
+    }
+    var tz = common.getSelectedTimezone();
+    document.querySelectorAll(".time-relative[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.timeAgo(epoch);
+      }
+    });
+    document.querySelectorAll(".time-absolute[data-epoch]").forEach(function (el) {
+      var epoch = parseInt(el.getAttribute("data-epoch"), 10);
+      if (!isNaN(epoch)) {
+        el.textContent = common.formatLocalizedTime(epoch, tz);
+      }
+    });
+  })();
+</script>
 {% endblock %}

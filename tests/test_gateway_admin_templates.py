@@ -727,6 +727,81 @@ def test_user_form_has_csrf_token(client, store, url):
 
 
 # ---------------------------------------------------------------------------
+# Delete buttons and scope chips
+# ---------------------------------------------------------------------------
+
+def test_users_list_delete_button_only_for_disabled_non_self_users(client, store):
+    _admin(store, client, username="root", user_id=1)
+    store.seed_user("active-bob", user_id=2)
+    store.seed_user("gone-bob", user_id=3, status="disabled")
+    html = client.get("/admin/users").get_data(as_text=True)
+
+    assert "/admin/users/gone-bob/delete" in html
+    assert "/admin/users/active-bob/delete" not in html
+    assert "/admin/users/root/delete" not in html
+
+
+def test_users_list_delete_form_has_confirm_and_csrf(client, store):
+    _admin(store, client)
+    store.seed_user("gone-bob", user_id=2, status="disabled")
+    html = client.get("/admin/users").get_data(as_text=True)
+
+    form = re.search(r'<form[^>]*users/gone-bob/delete.*?</form>', html, re.DOTALL).group(0)
+    assert "data-confirm=" in form
+    assert re.search(r'name="csrf_token" value="[^"]+"', form)
+
+
+def test_users_list_scopes_render_as_chips(client, store):
+    _admin(store, client)
+    store.seed_user("bob", user_id=2)
+    store.seed_scope("user:bob", "acme", "logs:read")
+    store.seed_scope("user:bob", "acme", "alerts:write")
+    store._user_roles["bob"].add("user:bob")
+    html = client.get("/admin/users").get_data(as_text=True)
+
+    assert '<span class="scope-client">acme</span>' in html
+    assert ">logs:read</span>" in html
+    assert ">alerts:write</span>" in html
+
+
+def test_users_list_wildcard_scope_gets_readable_labels(client, store):
+    _admin(store, client)
+    store.seed_scope("master_admin", "*", "*")
+    html = client.get("/admin/users").get_data(as_text=True)
+    assert "all clients" in html
+    assert "all permissions" in html
+
+
+def test_scope_chip_html_escapes_malicious_client_name(client, store):
+    _admin(store, client)
+    store.seed_user("bob", user_id=2)
+    store.seed_scope("user:bob", '"><script>alert(1)</script>', "logs:read")
+    store._user_roles["bob"].add("user:bob")
+    html = client.get("/admin/users").get_data(as_text=True)
+    assert "<script>alert(1)</script>" not in html
+
+
+def test_clients_list_delete_button_only_for_disabled_clients(client, store):
+    _admin(store, client)
+    store.seed_client("live-co")
+    store.seed_client("old-co", status="disabled")
+    html = client.get("/admin/clients").get_data(as_text=True)
+
+    assert "/admin/clients/old-co/delete" in html
+    assert "/admin/clients/live-co/delete" not in html
+    form = re.search(r'<form[^>]*clients/old-co/delete.*?</form>', html, re.DOTALL).group(0)
+    assert "data-confirm=" in form
+    assert re.search(r'name="csrf_token" value="[^"]+"', form)
+
+
+def test_clients_list_html_escapes_malicious_client_name(client, store):
+    _admin(store, client)
+    store.seed_client('"><script>alert(1)</script>', status="disabled")
+    html = client.get("/admin/clients").get_data(as_text=True)
+    assert "<script>alert(1)</script>" not in html
+
+
+# ---------------------------------------------------------------------------
 # XSS safety
 # ---------------------------------------------------------------------------
 

@@ -97,6 +97,7 @@ def test_create_app_registers_all_five_blueprints(config, mocker):
         "/admin/users/new",
         "/admin/users/<username>/edit",
         "/admin/users/<username>/disable",
+        "/admin/users/<username>/delete",
         "/admin/users/<username>/enable",
         "/admin/users/<username>/reset-password",
         "/admin/users/<username>/tokens/new",
@@ -104,6 +105,7 @@ def test_create_app_registers_all_five_blueprints(config, mocker):
         "/admin/clients",
         "/admin/clients/new",
         "/admin/clients/<name>/disable",
+        "/admin/clients/<name>/delete",
         "/admin/clients/<name>/enable",
     }
 

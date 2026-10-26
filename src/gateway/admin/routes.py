@@ -14,9 +14,9 @@ it the DB's own CHECK constraints) remains the single authority on what is
 a valid user/role/scope; nothing here re-implements or duplicates that
 validation.
 
-No delete route in v1 (`disable` covers deactivation; `UserStore.delete_user()`
-exists for other purposes -- CLI cleanup/testing -- and is deliberately not
-wired to any route here, per the brief).
+Delete (users and clients) is a second step after disable: the delete routes
+refuse an account/client that is still active. Deleting only removes the
+registry/identity rows -- alerts, logs and audit history are never touched.
 
 --------------------------------------------------------------------------
 1. Auth: `require_master_admin` (Task 18/19) on every route
@@ -235,10 +235,29 @@ import secrets
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from flask import Blueprint, Response, abort, current_app, g, make_response, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    current_app,
+    flash,
+    g,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
 from gateway.principal import require_master_admin
-from userstore import ALLOWED_PERMISSIONS, MASTER_ADMIN_ROLE, ClientNotFoundError, UserNotFoundError, UserStore
+from userstore import (
+    ALLOWED_PERMISSIONS,
+    MASTER_ADMIN_ROLE,
+    PERSONAL_ROLE_PREFIX,
+    ClientNotFoundError,
+    UserNotFoundError,
+    UserStore,
+)
 
 logger = logging.getLogger("gateway.admin")
 
@@ -263,7 +282,8 @@ GENERATED_PASSWORD_BYTES = 12
 # check is explicit (`_selectable_roles()` filters it out; the `roles`
 # form field is validated against that same filtered set) rather than
 # relied upon by convention alone.
-PERSONAL_ROLE_PREFIX = "user:"
+# PERSONAL_ROLE_PREFIX is imported from userstore (it owns the name so delete_user()
+# can remove the personal role too).
 
 # v1 default for a brand-new scope row -- matches the brief exactly. Passed
 # to the template as a hint for what a freshly-added blank row should
@@ -735,6 +755,7 @@ def disable_user(username: str):
         return Response("You cannot disable your own account.\n", status=400, mimetype="text/plain")
 
     store.disable_user(username_norm, actor=_actor(), source_ip=_source_ip())
+    flash(f"Disabled user {username_norm}.", "success")
     return redirect(url_for("admin.list_users"))
 
 
@@ -751,6 +772,33 @@ def enable_user(username: str):
         store.enable_user(username_norm, actor=_actor(), source_ip=_source_ip())
     except UserNotFoundError:
         abort(404)
+    flash(f"Enabled user {username_norm}.", "success")
+    return redirect(url_for("admin.list_users"))
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/users/<username>/delete -- permanent removal, disabled users only
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/users/<username>/delete", methods=["POST"])
+@require_master_admin
+def delete_user(username: str):
+    store = _user_store()
+    username_norm = _normalize_username(username)
+
+    target = store.get_user(username_norm)
+    if target is None:
+        abort(404)
+
+    if target["id"] == g.principal.user_id:
+        return Response("You cannot delete your own account.\n", status=400, mimetype="text/plain")
+    if target["status"] != "disabled":
+        return Response("Disable the user before deleting it.\n", status=400, mimetype="text/plain")
+
+    # No last-master_admin guard: only a master_admin reaches this route and
+    # the self-delete check above excludes the caller, so one always remains.
+    store.delete_user(username_norm, actor=_actor(), source_ip=_source_ip())
+    flash(f"Deleted user {username_norm}.", "success")
     return redirect(url_for("admin.list_users"))
 
 
@@ -840,14 +888,16 @@ def revoke_token(username: str, token_id: int):
 
 # ---------------------------------------------------------------------------
 # GET /admin/clients -- list; GET/POST /admin/clients/new -- create;
-# POST .../disable, POST .../enable -- soft-disable/re-enable
+# POST .../disable, POST .../enable -- soft-disable/re-enable;
+# POST .../delete -- remove a disabled client from the registry
 #
 # The clients registry (sql/migrations/0004_clients.sql): promotes "client"
 # from pure free text into a real, admin-managed list. No delete route --
 # same "no hard delete for a named entity" convention as users/roles;
-# disable/enable is the full lifecycle. No self-lockout-style guard rail
-# here -- there is no "self" concept for a client, unlike a user disabling
-# their own account or removing their own master_admin role.
+# Delete is a second step after disable and removes only the registry row.
+# No self-lockout-style guard rail here -- there is no "self" concept for a
+# client, unlike a user disabling their own account or removing their own
+# master_admin role.
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/admin/clients", methods=["GET"])
@@ -885,6 +935,7 @@ def create_client():
         return _reject(f"Client {name!r} is already registered.")
 
     store.create_client(name, description, actor=_actor(), source_ip=_source_ip())
+    flash(f"Registered client {name}.", "success")
     return redirect(url_for("admin.list_clients"))
 
 
@@ -895,6 +946,7 @@ def disable_client(name: str):
         _user_store().disable_client(_normalize_client(name), actor=_actor(), source_ip=_source_ip())
     except ClientNotFoundError:
         abort(404)
+    flash(f"Disabled client {_normalize_client(name)}.", "success")
     return redirect(url_for("admin.list_clients"))
 
 
@@ -905,4 +957,20 @@ def enable_client(name: str):
         _user_store().enable_client(_normalize_client(name), actor=_actor(), source_ip=_source_ip())
     except ClientNotFoundError:
         abort(404)
+    flash(f"Enabled client {_normalize_client(name)}.", "success")
+    return redirect(url_for("admin.list_clients"))
+
+
+@admin_bp.route("/admin/clients/<name>/delete", methods=["POST"])
+@require_master_admin
+def delete_client(name: str):
+    store = _user_store()
+    name_norm = _normalize_client(name)
+    target = store.get_client(name_norm)
+    if target is None:
+        abort(404)
+    if target["status"] != "disabled":
+        return Response("Disable the client before deleting it.\n", status=400, mimetype="text/plain")
+    store.delete_client(name_norm, actor=_actor(), source_ip=_source_ip())
+    flash(f"Deleted client {name_norm}.", "success")
     return redirect(url_for("admin.list_clients"))

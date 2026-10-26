@@ -335,12 +335,19 @@ Backward, byte-aligned page read ending at `end` (defaults to the file's current
 
 ```bash
 GET  /admin/users
+GET  /admin/clients
+GET  /admin/clients/new
+POST /admin/clients/new
+POST /admin/clients/<name>/disable
+POST /admin/clients/<name>/enable
+POST /admin/clients/<name>/delete
 GET  /admin/users/new
 POST /admin/users/new
 GET  /admin/users/<username>/edit
 POST /admin/users/<username>/edit
 POST /admin/users/<username>/disable
 POST /admin/users/<username>/enable
+POST /admin/users/<username>/delete
 POST /admin/users/<username>/reset-password
 POST /admin/users/<username>/tokens/new
 POST /admin/users/<username>/tokens/<token_id>/revoke
@@ -348,7 +355,7 @@ POST /admin/users/<username>/tokens/<token_id>/revoke
 
 **Authentication**: Session only, and the account must hold the `master_admin` role (`403` otherwise). Every mutating route requires a valid CSRF token (a POST without one is rejected with `400`).
 
-Server-rendered user/role/scope administration -- the same `UserStore` methods `tools/user-manager.py` calls, exercised from a web form instead of argv. Username is fixed at creation (`^[a-z0-9_-]{3,32}$`); roles are assigned via checkboxes; per-user ad-hoc `(client, permission)` scopes are entered as repeatable rows and stored under an auto-managed "personal role" (`user:<username>`) that never appears as a general-purpose role for anyone else. Passwords are always server-generated (never operator-chosen) and shown exactly once on a `Cache-Control: no-store` result page. Two guard rails prevent locking yourself out: you cannot disable your own account, and you cannot remove your own `master_admin` role. There is no delete route in v1 -- `disable` covers deactivation.
+Server-rendered user/role/scope administration -- the same `UserStore` methods `tools/user-manager.py` calls, exercised from a web form instead of argv. Username is fixed at creation (`^[a-z0-9_-]{3,32}$`); roles are assigned via checkboxes; per-user ad-hoc `(client, permission)` scopes are entered as repeatable rows and stored under an auto-managed "personal role" (`user:<username>`) that never appears as a general-purpose role for anyone else. Passwords are always server-generated (never operator-chosen) and shown exactly once on a `Cache-Control: no-store` result page. Two guard rails prevent locking yourself out: you cannot disable your own account, and you cannot remove your own `master_admin` role. Delete is a second step after disable: `POST .../delete` (users and clients) returns `400` unless the account/client is already disabled, and an admin cannot delete their own account. Deleting a user also removes their tokens and personal scope role; deleting a client removes only its registry entry. Alerts, logs, and audit history are never touched.
 
 The New User form also has a "Service account" checkbox (a client-side convenience that defaults "Require password change" off and "Issue a Bearer token" on -- nothing about it is stored) and an "Issue a Bearer token" checkbox + name field, so a machine/API account can get both its password and its first token in one step. An account's edit page lists every token it holds (name/status/created/last used) with a Revoke button per active token, plus a small form to issue additional tokens later. Tokens issued through the web UI always have `expires_at` unset (never expire) -- there's no expiry-picker control; `POST .../tokens/<token_id>/revoke` verifies the token actually belongs to the account named in the URL before revoking it, the same class of check as the disable/edit guard rails above.
 
