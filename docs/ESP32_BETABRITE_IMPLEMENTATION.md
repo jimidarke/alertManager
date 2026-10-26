@@ -1166,9 +1166,8 @@ void debugBetabriteCommand(const String& command) {
 ## Additional Resources
 
 ### Alert Manager Documentation
-- **CLIENTNODE.md** - Client integration guide
+- **CLIENTNODE.md** - Alert payload specification and client integration guide
 - **BETABRITE.md** - Complete BetaBrite protocol reference
-- **ALERT_PAYLOAD_SPEC.md** - Alert payload specification
 
 ### BetaBrite Protocol
 - **Alpha Protocol Specification** - Official BetaBrite documentation

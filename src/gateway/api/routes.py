@@ -649,9 +649,8 @@ def test_alert():
 
 
 @api_bp.route("/docs", methods=["GET"])
-@require_auth(methods=API_ONLY)
 def get_docs():
-    """Port of http_gateway.py's `/docs` (auth required): serves CLIENTNODE.md as text/markdown."""
+    """Serves CLIENTNODE.md as text/markdown, unauthenticated: it's the public sender contract (also on GitHub)."""
     try:
         doc_paths = [
             "/data/docs/CLIENTNODE.md",
@@ -697,9 +696,8 @@ def get_docs():
 def serve_docs(filename):
     """
     Port of http_gateway.py's `/docs/<filename>` -- deliberately WITHOUT
-    auth, exactly matching the original (verified by reading it: this one
-    route has no `@self.require_auth`, unlike `/docs` above; the original's
-    own docstring calls this out explicitly: "without authentication").
+    auth, exactly matching the original (its own docstring calls this out
+    explicitly: "without authentication"), same as `/docs` above.
     """
     docs_dir = "/data/docs"
 

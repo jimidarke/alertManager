@@ -292,89 +292,9 @@ The BetaBrite library integrates seamlessly with the centralized Alert Router Se
 
 ### Alert Router to BetaBrite Mapping
 
-#### Standardized JSON Alert Message Format
+#### Sending an Alert to a Sign
 
-**Basic Alert with LED Configuration**:
-```json
-{
-  "timestamp": 1704045600,
-  "level": "critical",
-  "category": "security",
-  "title": "Motion Detected",
-  "message": "Front door motion sensor triggered",
-  "source": {
-    "id": "security-system-01",
-    "type": "security_service",
-    "metadata": {
-      "location": "front_door",
-      "device_id": "motion_01"
-    }
-  },
-  "pathway_config": {
-    "led_security": {
-      "zones": {
-        "main": {
-          "display_config": {
-            "mode": "explode",
-            "special_effect": "bomb",
-            "color": "red",
-            "character_set": "10high",
-            "speed": 5,
-            "priority": true,
-            "duration": 30
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-**Multi-Zone LED Alert Configuration**:
-```json
-{
-  "timestamp": 1704045600,
-  "level": "warning",
-  "category": "system",
-  "title": "Server Status Alert",
-  "message": "High CPU usage detected on production server",
-  "source": {
-    "id": "monitoring-service",
-    "type": "monitoring",
-    "metadata": {
-      "server": "prod-01",
-      "cpu_usage": "85%"
-    }
-  },
-  "metadata": {
-    "led_zones": ["office", "server_room"]
-  },
-  "pathway_config": {
-    "led_status": {
-      "zones": {
-        "office": {
-          "display_config": {
-            "mode": "scroll",
-            "color": "amber",
-            "character_set": "7high",
-            "speed": 3
-          }
-        },
-        "server_room": {
-          "display_config": {
-            "mode": "flash",
-            "special_effect": "starburst",
-            "color": "red",
-            "character_set": "10high",
-            "speed": 4,
-            "priority": true
-          }
-        }
-      }
-    }
-  }
-}
-```
+The sender-side payload (how to target zones and set `display_config` per alert, via `pathway_config`) is specified only in `CLIENTNODE.md` -- see its "LED signs" and "Per-pathway overrides" sections. The router converts the names below into BetaBrite codes and publishes `{timestamp, level, category, title, message, source, zone, display_config}` to `ledSign/{zone}/message`.
 
 #### ESP32 Integration Code Example
 ```cpp

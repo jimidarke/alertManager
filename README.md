@@ -1,6 +1,6 @@
 # Alert Manager
 
-![Version](https://img.shields.io/badge/version-3.4.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.4.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 
@@ -177,18 +177,17 @@ python3 -m pytest tests/ -q
   "source": "security_system",
   "client": "home",
   "metadata": {
-    "device_id": "motion_01",
-    "led_zones": ["main", "security"]
+    "device_id": "motion_01"
   },
   "routing": {
     "override": true,
-    "pathways": ["led_sign", "console", "file_log"]
+    "pathways": ["led_sign", "console_alerts", "file_log"]
   },
-  "display_config": {
-    "mode": "newsflash",
-    "color": "red",
-    "priority": true,
-    "duration": 30
+  "pathway_config": {
+    "led_sign": {
+      "zones": ["main", "security"],
+      "display_config": {"mode": "newsflash", "color": "red", "priority": true, "duration": 30}
+    }
   }
 }
 ```
@@ -196,7 +195,7 @@ python3 -m pytest tests/ -q
 `timestamp`, `level`, `category`, `title`, `message`, and `source` are required.
 `timestamp` must be a Unix epoch **integer** (not ISO-8601) and `source` must be a
 **string**. `routing.override: true` replaces the configured rules outright.
-Full contract with validation rules: [docs/ALERT_PAYLOAD_SPEC.md](docs/ALERT_PAYLOAD_SPEC.md).
+Full contract with validation rules: [docs/CLIENTNODE.md](docs/CLIENTNODE.md).
 
 ### Alert Levels
 - **`critical`**: Immediate attention required (aliases: `error`, `err`, `crit`)
@@ -209,7 +208,7 @@ Full contract with validation rules: [docs/ALERT_PAYLOAD_SPEC.md](docs/ALERT_PAY
 
 `security`, `system`, `weather`, `automation`, `personal`, `network`, `application`,
 `news`, `business`, `hardware`, `environmental` -- fixed values, case-insensitive.
-See [docs/ALERT_PAYLOAD_SPEC.md](docs/ALERT_PAYLOAD_SPEC.md) for definitions.
+See [docs/CLIENTNODE.md](docs/CLIENTNODE.md) for definitions.
 
 ## Client Integration
 
@@ -391,8 +390,7 @@ The web dashboard (`/dashboard`) and streaming log viewer (`/logs`) provide the 
 ## Documentation
 
 **Start here**
-- **[docs/CLIENTNODE.md](docs/CLIENTNODE.md)** - Client integration guide (payload contract, credential rotation)
-- **[docs/ALERT_PAYLOAD_SPEC.md](docs/ALERT_PAYLOAD_SPEC.md)** - Complete payload specification with validation rules
+- **[docs/CLIENTNODE.md](docs/CLIENTNODE.md)** - The single payload contract and client integration guide (public, also served at `GET /docs`)
 - **[sdk/python/README.md](sdk/python/README.md)** - Python SDK usage
 - **[skills/alert-manager/](skills/alert-manager/)** - Claude Code skill: teaches an LLM agent the payload contract, SDK, and linux-agent so it can integrate correctly on the first try (`install.sh` copies it into `~/.claude/skills/`)
 - **[sample-payload/](sample-payload/)** - JSON payload reference examples

@@ -81,7 +81,7 @@ alert-manager/
 ├── install.sh                   # copies this dir to ~/.claude/skills/alert-manager
 ├── VERSION                      # this skill package's own version
 ├── references/                  # detail SKILL.md points into, not inlined
-│   ├── payload-reference.md
+│   ├── payload-reference.md     # symlink -> ../../../docs/CLIENTNODE.md (dereferenced on install)
 │   ├── auth-and-provisioning.md
 │   ├── sdk-python.md
 │   └── linux-agent.md
@@ -91,13 +91,15 @@ alert-manager/
 
 ## Keeping this in sync with the actual service
 
-`SKILL.md` and the `references/` files are a curated snapshot of
-`docs/CLIENTNODE.md`, `docs/AUTH.md`, the SDK source, and
-`clients/linux-agent/README.md` elsewhere in this repo — not a generated
-copy. If the wire contract, auth model, or SDK surface changes, update both
+`references/payload-reference.md` is not a copy: it's a symlink to
+`docs/CLIENTNODE.md`, the repo's single payload contract, and `install.sh`
+dereferences it so the installed skill gets the current file. `SKILL.md`
+and the other `references/` files are a curated snapshot of
+`docs/AUTH.md`, the SDK source, and `clients/linux-agent/README.md`
+elsewhere in this repo — not a generated copy. If the wire contract, auth model, or SDK surface changes, update both
 the source docs and this skill; they're allowed to drift in wording but not
 in the facts they state. `SKILL.md` itself points agents at
-`GET /docs` on a live deployment (or the GitHub-hosted `CLIENTNODE.md` if
-they don't have credentials yet) as the actual escape hatch when in doubt —
+`GET /docs` on a live deployment (unauthenticated) or the GitHub-hosted
+`CLIENTNODE.md` as the actual escape hatch when in doubt —
 this skill is meant to get an agent correct on the first try, not to be the
 final word if it and the live service ever disagree.

@@ -32,10 +32,10 @@ just swap the base URL.
 **`POST /alert` is the sole ingestion path.** Earlier versions of this
 project also accepted MQTT and SNMPv3 traps; both are dead ends now (MQTT
 survives only as a device bus for LED signs, not alert intake). If you land
-on an old example that publishes an alert to an MQTT topic, or on
-`docs/ALERT_PAYLOAD_SPEC.md` in this repo (it's **stale** — still documents
-MQTT ingestion and a working `routing.exclude`, neither of which is true —
-`docs/CLIENTNODE.md` supersedes it), don't follow it.
+on an old example that publishes an alert to an MQTT topic, uses
+`routing.exclude` (never implemented), or steers an LED sign with
+`metadata.led_zones` / a top-level `display_config` (not read — use
+`pathway_config`, see `references/payload-reference.md`), don't follow it.
 
 ## Which tool for this task
 
@@ -68,10 +68,11 @@ sender — most are silent failures with no error to grep for.
    validation above and silently dropped — annoying, but at least it's a
    known failure. Worse: a **millisecond** timestamp (e.g. a straight port
    of JavaScript's `Date.now()`) is a perfectly valid integer. It passes
-   every validation stage, everywhere, and produces an alert with a
-   timestamp roughly 1000x too large — a garbage date far in the future —
-   with **no error at any layer**. `1732982400` is right; `1732982400123`
-   is wrong and nothing will tell you so. Watch for this specifically when
+   every routing validation stage and produces an alert with a timestamp
+   roughly 1000x too large — a garbage date far in the future — that the
+   database (and so the dashboard) quietly refuses to store, with **no
+   error reported to you**. `1732982400` is right; `1732982400123` is
+   wrong and nothing will tell you so. Watch for this specifically when
    porting alerting logic from a non-Python source.
 
 3. **`client` is an authorization subject, not a free-text label.** The
@@ -134,6 +135,9 @@ before you touch the next:
 
 **Levels**: `critical` (aliases `error`/`err`/`crit`), `warning` (alias
 `warn`), `notice` (no alias), `info` (alias `inf`), `debug` (alias `dbg`).
+Send the canonical lowercase value: routing accepts aliases, but the
+database/dashboard drops anything non-canonical. The SDK and
+`scripts/send-alert.sh` normalize for you; raw senders must do it themselves.
 
 **Categories**: `security`, `system`, `weather`, `automation`, `personal`,
 `network`, `application`, `news`, `business`, `hardware`, `environmental`.
@@ -179,20 +183,21 @@ client.send(level="info", category="application", title="Status", message="Task 
 
 ## Staying current
 
-This service has no live self-describing endpoint (no `openapi.json`
-equivalent), so the freshest wire contract lives in two places depending on
-whether you have credentials yet:
+This service has no `openapi.json` equivalent; the wire contract is one
+markdown file, `docs/CLIENTNODE.md`, which this skill ships as
+`references/payload-reference.md`. Fresher copies, no credentials needed for either:
 
-- **No credentials yet**: `https://raw.githubusercontent.com/jimidarke/alertManager/main/docs/CLIENTNODE.md`
-- **Have credentials**: `GET /docs` on the actual deployment — an
-  authenticated route serving the *actually-deployed* contract doc, which
-  can differ from GitHub `main` if that instance is pinned to an older
-  release or is someone's fork.
+- **The deployment you're talking to**: `GET /docs` — unauthenticated,
+  serves the *actually-deployed* contract, which can differ from GitHub
+  `main` if that instance is pinned to an older release or is someone's fork.
+- **Latest**: `https://raw.githubusercontent.com/jimidarke/alertManager/main/docs/CLIENTNODE.md`
 
 ## Reference files
 
-- `references/payload-reference.md` — full field tables, LED display config,
-  routing overrides, the complete validation/response-code tables. Read
+- `references/payload-reference.md` — the service's full payload contract
+  (`docs/CLIENTNODE.md`, copied in at install): field tables, routing and
+  `pathway_config` overrides, LED display config, the complete
+  validation/response-code tables. Read
   when you need more than the quick reference above.
 - `references/auth-and-provisioning.md` — auth model, the `client` field's
   authorization rules in depth, how to provision a new sender account,

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Alert Manager - Technical Reference
 
-**Version:** 3.4.0
+**Version:** 3.4.1
 **Last Updated:** 2026-10-26
 
 ## Project Purpose
@@ -77,7 +77,7 @@ Pathways are loaded by `pathways/pathway_manager.py` (`PathwayManager`) and inst
 ### HTTP Gateway
 - **Host**: `alert.d-t.pw` (port 443, HTTPS only via `nginx-proxy`) -- as of v2.0.0 the `http-gateway` container publishes **no** host port; container-internal `:8080` is not reachable from outside the Docker host at all
 - **Implementation**: `src/gateway/` (Flask app-factory package, `create_app()`; replaces the deleted `src/http_gateway.py`), served by gunicorn (`gateway.wsgi:app`, 1 worker x 8 gthread threads) -- organized into five blueprints, each with its own auth policy:
-  - **`api`** (`gateway/api/`) -- `GET /health` (no auth), `POST /alert`, `POST /test`, `GET /docs`, `GET /docs/<f>` (unauthenticated, ported verbatim) -- Basic/Bearer only, never a session cookie
+  - **`api`** (`gateway/api/`) -- `GET /health` (no auth), `POST /alert`, `POST /test`, `GET /docs` (serves `CLIENTNODE.md`) and `GET /docs/<f>` (both unauthenticated) -- Basic/Bearer only, never a session cookie
   - **`auth`** (`gateway/auth/`) -- `GET/POST /login`, `POST /logout`, `GET /api/whoami` (session, Basic, or Bearer)
   - **`logs`** (`gateway/logs/`) -- `GET /logs` (page), `GET /api/logs/list`, `GET /api/logs/tail`, `GET /api/logs/chunk` -- session **or** Basic/Bearer (keeps `curl -u` shell-test workflows working)
   - **`dashboard`** (`gateway/dashboard/`) -- `GET /dashboard` (page), `GET /api/dashboard/summary`, `GET /api/dashboard/groups` (alerts grouped client -> source, latest 30 per source at the selected `levels`; the level cards are multi-select filters, default critical) -- session only
@@ -157,69 +157,12 @@ data/
 
 ## Alert Payload Schema
 
-### Alert Levels (Fixed Values)
+**`docs/CLIENTNODE.md` is the only payload spec** -- required/optional fields, level/category enums and aliases, normalization, the `client` authorization rules, two-stage validation, response codes, routing overrides, `pathway_config`, and LED `display_config` values all live there and nowhere else (no copy here, in README, or in the skill: `skills/alert-manager/references/payload-reference.md` is a symlink to it). It is public: `GET /docs` serves it unauthenticated. Read it before touching payload handling, and update it with any payload change.
 
-| Level | Aliases | Purpose |
-|-------|---------|---------|
-| `critical` | `error`, `err`, `crit` | Emergency conditions requiring immediate attention |
-| `warning` | `warn` | Important conditions that may require investigation |
-| `notice` | *(none)* | Normal but significant operational events |
-| `info` | `inf` | General informational messages |
-| `debug` | `dbg` | Debug-level troubleshooting messages |
-
-### Alert Categories (Fixed Values)
-
-| Category | Purpose |
-|----------|---------|
-| `security` | Security and access control events |
-| `system` | System and infrastructure events |
-| `weather` | Weather and environmental alerts |
-| `automation` | Home/building automation events |
-| `personal` | Personal notifications and reminders |
-| `network` | Network and connectivity events |
-| `application` | Application-specific events |
-| `news` | News and information updates |
-| `business` | Business operations, audits, imports, config changes |
-| `hardware` | Physical infrastructure, device status, battery, disk health |
-| `environmental` | Environmental monitoring, temperature, humidity, air quality |
-
-### Required Fields
-- **`timestamp`** (integer): Unix epoch seconds (no decimals)
-- **`level`** (string): One of: critical, warning, notice, info, debug (or aliases)
-- **`category`** (string): One of: security, system, weather, automation, personal, network, application, news, business, hardware, environmental
-- **`title`** (string): Short alert title
-- **`message`** (string): Detailed alert message
-- **`source`** (string): Source identifier (must be string, not object)
-
-### Optional Fields
-- **`client`** (string): Client name/identifier for filtering and logging (empty string if not provided)
-- **`metadata`** (object): Additional key-value data
-- **`routing.override`** (bool), **`routing.pathways`** (array). `override: true` replaces the configured rules outright; an empty/missing `pathways` then routes nowhere. (`routing.exclude` is **not** implemented -- `apply_routing_rules()` reads only `override` and `pathways`.)
-- **`display_config`** (object): LED sign display configuration
-
-### Field Validation
-- **timestamp**: Must be Unix epoch integer (not ISO 8601 string, no decimals)
-- **source**: Must be string (not object)
-- **level**: Validated against allowed values (case-insensitive, trimmed, aliases supported)
-- **category**: Validated against allowed values (case-insensitive, trimmed)
-- **client**: Optional string field (case-insensitive, trimmed)
-
-### String Normalization
-All string fields (`level`, `category`, `client`) are automatically normalized:
-- Whitespace trimmed from both ends
-- Converted to lowercase
-- Aliases applied to `level` field
-- Examples: `" ERROR "` → `"critical"`, `"Critical"` → `"critical"`, `" SYSTEM "` → `"system"`
-
-### LED Display Configuration Fields
-- **mode**: rotate, hold, flash, scroll, rollup, rolldown, rollright, rollleft, explode, newsflash, welcome, compressed
-- **special_effect**: twinkle, sparkle, snow, starburst, bomb, welcome, cyclecolors
-- **color**: red, green, amber, rainbow1, rainbow2, autocolor, color_mix
-- **character_set**: 5high, 7high, 10high, 7shadow, 7highfancy, 7widestroke
-- **speed**: 1-5 (slowest to fastest)
-- **priority**: boolean (interrupt normal display rotation)
-- **duration**: seconds (for priority messages)
-- **LED zones**: Specified in `metadata.led_zones` array
+Gotchas verified against the code (2026-10-26), easy to reintroduce into docs:
+- The LED pathway does **not** read top-level `display_config` or `metadata.led_zones`; only `pathway_config.<led pathway name>.zones` / `.display_config` steer a sign.
+- `database_logger.py` stores the raw payload without normalization, and the `alerts` table CHECKs canonical `level`/`category` and a 2020-01-01..now+1d timestamp -- so aliased levels and millisecond timestamps are routed but never reach the DB/dashboard.
+- `routing.exclude` is not implemented.
 
 ## User Access Control
 
@@ -551,8 +494,7 @@ The project uses centralized version management:
 All reference docs live in `docs/` (except `README.md`, `CHANGELOG.md` at root). `docs/CLIENTNODE.md` is the integration source-of-truth — keep it in sync with payload changes.
 
 **Integration & payload**
-- **CLIENTNODE.md** - Client integration guide with payload specifications
-- **ALERT_PAYLOAD_SPEC.md** - Complete payload specification with validation rules
+- **CLIENTNODE.md** - The single payload specification and client integration guide (public, served at `GET /docs`)
 
 **Gateways & transports**
 - **HTTP_GATEWAY.md** - HTTP API reference (sessions, `api`/`logs`/`dashboard`/`admin` blueprints)

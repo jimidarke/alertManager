@@ -108,7 +108,7 @@ Authorization: Basic base64(username:password)
 
 **Authorization (breaking as of v2.0.0)**: the effective client (payload `client`, else the account's `default_client`, else clientless `''`) must be covered by an `alerts:write` scope the account holds; the clientless case additionally requires the `master_admin` role. See `CLIENTNODE.md` for the full breaking-change note.
 
-**Required Payload:**
+**Required Payload** (full contract, including optional fields and validation: `CLIENTNODE.md`):
 ```json
 {
   "timestamp": 1705315800,
@@ -183,7 +183,7 @@ GET /docs
 GET /docs/<filename>
 ```
 
-`GET /docs` requires auth (Basic/Bearer) and serves `CLIENTNODE.md` as `text/markdown`. `GET /docs/<filename>` is deliberately unauthenticated (ported verbatim from the original gateway) and serves an arbitrary file from `/data/docs`, with directory-traversal protection.
+Both are unauthenticated. `GET /docs` serves `CLIENTNODE.md` (the public payload contract) as `text/markdown`. `GET /docs/<filename>` serves an arbitrary file from `/data/docs` (the repo's `docs/`, already public), with directory-traversal protection.
 
 ## Browser-Facing Pages
 

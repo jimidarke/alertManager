@@ -671,17 +671,11 @@ def test_test_alert_succeeds_for_any_authenticated_principal_no_permission_neede
 
 
 # ---------------------------------------------------------------------------
-# GET /docs (auth required, serves CLIENTNODE.md) / GET /docs/<f> (public)
+# GET /docs (public, serves CLIENTNODE.md) / GET /docs/<f> (public)
 # ---------------------------------------------------------------------------
 
-def test_docs_requires_auth(client, store):
+def test_docs_serves_clientnode_md_without_auth(client):
     resp = client.get("/docs")
-    assert resp.status_code == 401
-
-
-def test_docs_serves_clientnode_md_when_authenticated(client, store):
-    store.add_user("alice", "hunter2")
-    resp = client.get("/docs", headers=_basic("alice", "hunter2"))
     assert resp.status_code == 200
     assert resp.mimetype == "text/markdown"
     assert "Alert Manager Client Integration Reference" in resp.get_data(as_text=True)

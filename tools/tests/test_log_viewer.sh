@@ -84,7 +84,7 @@ echo ""
 
 # Test 6: Verify CLIENTNODE.md link
 echo "6. Testing documentation endpoint..."
-DOCS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -u "$USERNAME:$PASSWORD" "http://$HOST/docs")
+DOCS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$HOST/docs")
 if [ "$DOCS_RESPONSE" = "200" ]; then
     echo "   ✓ Documentation accessible (HTTP $DOCS_RESPONSE)"
 else

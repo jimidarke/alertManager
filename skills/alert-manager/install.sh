@@ -13,9 +13,13 @@
 #
 #   2. Standalone, no checkout required:
 #        curl -fsSL https://raw.githubusercontent.com/jimidarke/alertManager/main/skills/alert-manager/install.sh | bash
-#      Does a shallow, sparse git clone of just this directory (not the
-#      whole repo -- Docker images, logs, etc. aren't needed for this),
-#      copies from there, and cleans up.
+#      Does a shallow, sparse git clone of just this directory plus docs/
+#      (not the whole repo -- Docker images, logs, etc. aren't needed for
+#      this), copies from there, and cleans up.
+#
+# references/payload-reference.md is a symlink to docs/CLIENTNODE.md (the
+# one payload contract); both copy paths below dereference it, so the
+# installed skill holds a real file.
 #
 # Re-run either form later to update: this script is idempotent and
 # always overwrites the destination with the current source. There is no
@@ -35,7 +39,7 @@ if [[ -f "$SCRIPT_PATH" ]]; then
 fi
 
 TMP_CLONE=""
-cleanup() { [[ -n "$TMP_CLONE" ]] && rm -rf "$TMP_CLONE"; }
+cleanup() { if [[ -n "$TMP_CLONE" ]]; then rm -rf "$TMP_CLONE"; fi; }
 trap cleanup EXIT
 
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/SKILL.md" ]]; then
@@ -49,21 +53,21 @@ else
   TMP_CLONE="$(mktemp -d)"
   echo "No local checkout found next to this script -- fetching skills/alert-manager from $REPO_URL ..."
   git clone --quiet --filter=blob:none --sparse --depth 1 "$REPO_URL" "$TMP_CLONE/repo"
-  git -C "$TMP_CLONE/repo" sparse-checkout set skills/alert-manager >/dev/null
+  git -C "$TMP_CLONE/repo" sparse-checkout set skills/alert-manager docs >/dev/null
   SRC="$TMP_CLONE/repo/skills/alert-manager"
 fi
 
-if [[ ! -f "$SRC/SKILL.md" ]]; then
-  echo "error: $SRC does not contain SKILL.md -- fetch/checkout is incomplete, aborting without touching $DEST" >&2
+if [[ ! -f "$SRC/SKILL.md" || ! -f "$SRC/references/payload-reference.md" ]]; then
+  echo "error: $SRC is missing SKILL.md or references/payload-reference.md (-> docs/CLIENTNODE.md) -- fetch/checkout is incomplete, aborting without touching $DEST" >&2
   exit 1
 fi
 
 mkdir -p "$DEST"
 if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete "$SRC"/ "$DEST"/
+  rsync -aL --delete "$SRC"/ "$DEST"/
 else
   rm -rf "${DEST:?}"/*
-  cp -r "$SRC"/. "$DEST"/
+  cp -rL "$SRC"/. "$DEST"/
 fi
 chmod +x "$DEST"/scripts/*.sh 2>/dev/null || true
 chmod +x "$DEST"/install.sh 2>/dev/null || true

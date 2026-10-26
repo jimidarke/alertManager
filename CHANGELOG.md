@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-10-26
+
+### Changed
+- **`GET /docs` is now unauthenticated.** It serves `docs/CLIENTNODE.md`, the public sender
+  contract (already on GitHub), so senders can read it before they have credentials.
+- **`docs/CLIENTNODE.md` is the single payload spec.** `docs/ALERT_PAYLOAD_SPEC.md` is deleted
+  (it still described MQTT ingestion, `routing.exclude`, and MQTT/syslog examples); its accurate
+  content (level/category guidance, examples, `_gateway` fields, routing rule conditions, best
+  practices) moved into CLIENTNODE.md. The payload sections in `CLAUDE.md`, `README.md` and
+  `docs/BETABRITE.md` now point there, and `skills/alert-manager/references/payload-reference.md`
+  is a symlink to it (`install.sh` dereferences it; skill bumped to 1.1.0).
+
+### Fixed
+- CLIENTNODE.md re-verified against the code. Corrections: the LED pathway does not read
+  `metadata.led_zones` or top-level `display_config` (only `pathway_config.<pathway>.zones` /
+  `.display_config`, now documented); the LED value lists now match `led_sign_pathway.py`
+  (several documented values didn't exist); the database store rejects aliased/non-canonical
+  `level`/`category` and out-of-range timestamps (including millisecond ones), so such alerts
+  are routed but never reach the dashboard; added the `503` and generic `500` responses and the
+  real order of `POST /alert` checks.
+- `skills/alert-manager/install.sh` exited 1 after a successful local install (EXIT trap
+  returned the status of a false `[[ ]]` test).
+
 ## [3.4.0] - 2026-10-26
 
 ### Changed
