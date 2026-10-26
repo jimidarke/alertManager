@@ -37,7 +37,7 @@ docstring for the binary/newline-aligned read rework and
 has_permission()/is_master_admin() authorization tiers.
 
 Task 22 adds the fourth blueprint (`dashboard`: `GET /dashboard`,
-`GET /api/dashboard/summary`, `GET /api/dashboard/critical`) --
+`GET /api/dashboard/summary`, `GET /api/dashboard/groups`) --
 session-only (`gateway.principal.SESSION_ONLY`), no CSRF exemption needed
 (GET-only). See `gateway/dashboard/routes.py`'s module docstring for why
 these two inherently multi-client endpoints use `require_auth` plus a

@@ -9,7 +9,7 @@
 
   This template is deliberately data-free: every number/row on the page is
   populated by src/static/js/dashboard.js from
-  GET /api/dashboard/summary and GET /api/dashboard/critical (Task 22) --
+  GET /api/dashboard/summary and GET /api/dashboard/groups (Task 22) --
   the ONLY server-supplied piece of state here is `db_ok`
   (gateway/dashboard/routes.py's `view_dashboard()`, a cheap `SELECT 1`
   probe used only to pick the initial HTTP status code and whether to
@@ -68,33 +68,28 @@
        toggled via the `hidden` attribute, never removed from the DOM. -->
   <div class="flash flash-warning" id="dashboard-error-banner" role="alert" hidden></div>
 
-  <!-- 5 cards, critical->debug order, populated by dashboard.js. -->
+  <!-- 5 level cards, critical->debug order, populated by dashboard.js as
+       toggle <button>s: each shows its count for the window and filters
+       the grouped view below to the selected levels (default Critical). -->
   <div class="card-grid" id="dashboard-cards" aria-live="polite"></div>
 
-  <section class="dashboard-critical" id="dashboard-critical-section">
-    <h2>Critical Alerts</h2>
+  <section class="dashboard-groups" id="dashboard-groups-section">
+    <div class="dashboard-groups-header">
+      <h2>Alerts by client &amp; source</h2>
+      <div class="dashboard-groups-toolbar">
+        <span class="tiny" id="dashboard-groups-showing"></span>
+        <button type="button" class="btn btn-secondary btn-sm" id="dashboard-expand-all">Expand all</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="dashboard-collapse-all">Collapse all</button>
+      </div>
+    </div>
 
     <div class="empty-state" id="dashboard-empty-state" hidden>
-      No critical alerts in the selected timeframe
+      No alerts in the selected timeframe
     </div>
 
-    <div class="dashboard-table-wrap" id="dashboard-table-wrap">
-      <table id="dashboard-critical-table">
-        <thead>
-          <tr>
-            <th class="col-time">Time</th>
-            <th class="col-client">Client</th>
-            <th class="col-source">Source</th>
-            <th>Alert</th>
-          </tr>
-        </thead>
-        <tbody id="dashboard-critical-tbody"></tbody>
-      </table>
-    </div>
-
-    <button type="button" class="btn btn-secondary dashboard-load-more" id="dashboard-load-more" hidden>
-      Load more
-    </button>
+    <!-- client -> source nested <details> tree, rebuilt by dashboard.js
+         from GET /api/dashboard/groups on every load/refresh. -->
+    <div class="group-tree" id="dashboard-groups"></div>
   </section>
 
   <!-- Row-detail modal: native <dialog>, structure only -- dashboard.js

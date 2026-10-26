@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-26
+
+### Changed
+- **Dashboard regrouped by client -> source.** The flat critical-only table is replaced by
+  collapsible client sections, each holding collapsible per-source sections that show the
+  latest 30 alerts (one line each, click for the detail modal) with per-level count badges,
+  last-seen time and a "showing 30 of N" note. The five level cards are now multi-select
+  filter toggles (default: Critical only); clients/sources with no matching alerts stay
+  listed, collapsed and dimmed, so every active client remains visible. Alphabetical
+  ordering keeps the 60s auto-refresh from reshuffling the page. Level selection and
+  collapse state persist per browser. Expand all / Collapse all controls added.
+- `GET /api/dashboard/critical` is replaced by `GET /api/dashboard/groups?window=&levels=`
+  (no compatibility shim -- the dashboard was its only consumer).
+
 ## [3.3.0] - 2026-10-26
 
 ### Added

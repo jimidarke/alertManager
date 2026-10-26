@@ -1,7 +1,7 @@
 """
 Tests for src/gateway/dashboard/routes.py (Task 22): the `dashboard`
 blueprint (`GET /dashboard`, `GET /api/dashboard/summary`,
-`GET /api/dashboard/critical`), wired through the real `create_app()` (so
+`GET /api/dashboard/groups`), wired through the real `create_app()` (so
 ProxyFix/CSRFProtect/blueprint registration are exactly what production
 gets), with Postgres/MQTT mocked exactly as tests/test_gateway_app.py
 establishes, a FakeUserStore swapped onto app.extensions afterward, and a
@@ -29,10 +29,11 @@ Covers, in priority order (per this task's brief):
 - Window enum: all 8 valid values produce the exact documented `since`;
   any other value is 400.
 - Zero-filled `counts` (a level with 0 matching rows still appears).
-- `/critical`'s `total` reflects the full matching COUNT(*), not the
-  page's row count.
-- `limit` clamping at the 200 boundary (201 -> 200, exactly 200 unchanged,
-  <1 or non-numeric -> 400); `offset` <0 or non-numeric -> 400.
+- `/groups`: `levels` parsing (default critical, empty -> counts only with
+  the rows query skipped, unknown -> 400), exact SQL for both queries, the
+  per-group cap bound as a param, and `_build_group_tree`'s alphabetical
+  (clientless-last) client -> source tree with zero-filled counts and
+  `matched` summed over the selected levels.
 - 503 (with a machine-checkable `error` field) when the DB pool can't be
   reached OR a query fails mid-flight -- for both API routes and the
   `/dashboard` page's DB probe (200-with-body vs. 503-with-warning-banner).
@@ -249,8 +250,8 @@ def test_summary_401_json_not_redirect_for_anonymous_api_request(client):
     assert "Location" not in resp.headers
 
 
-def test_critical_401_json_not_redirect_for_anonymous_api_request(client):
-    resp = client.get("/api/dashboard/critical")
+def test_groups_401_json_not_redirect_for_anonymous_api_request(client):
+    resp = client.get("/api/dashboard/groups")
     assert resp.status_code == 401
     assert "Location" not in resp.headers
 
@@ -378,18 +379,16 @@ def test_scope_master_admin_vs_non_admin_wildcard_produce_different_sql_for_the_
     assert resp_admin.get_json()["scope"] == resp_non_admin.get_json()["scope"] == "all"
 
 
-def test_scope_non_master_admin_wildcard_applies_to_critical_endpoint_too(client, store, mocker):
-    # Same fix, /critical side -- verified independently since it builds
-    # its SQL via _critical_count_query/_critical_rows_query, not
+def test_scope_non_master_admin_wildcard_applies_to_groups_endpoint_too(client, store, mocker):
+    # Same fix, /groups side -- verified independently since it builds
+    # its SQL via _group_counts_query/_group_rows_query, not
     # _summary_query.
     mocker.patch("time.time", return_value=2_000_000_000)
     principal = store.add_user("wildcard-reader", roles=frozenset(), scopes={"*": frozenset({"logs:read"})})
-    pool = _install_pool(
-        client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}])
-    )
+    pool = _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical?window=24h")
+    resp = client.get("/api/dashboard/groups?window=24h")
     assert resp.status_code == 200
 
     count_sql, count_params = pool._cursor.executed[0]
@@ -399,7 +398,42 @@ def test_scope_non_master_admin_wildcard_applies_to_critical_endpoint_too(client
     assert "client IS NOT NULL AND client != ''" in count_sql
     assert "client IS NOT NULL AND client != ''" in rows_sql
     assert count_params == [2_000_000_000 - 86400]
-    assert rows_params == [2_000_000_000 - 86400, 50, 0]
+    assert rows_params == [2_000_000_000 - 86400, ["critical"], 30]
+
+
+@pytest.mark.parametrize(
+    "scopes,roles,expected_client_params",
+    [
+        ({"*": frozenset({"logs:read"})}, frozenset({"master_admin"}), []),
+        ({"clientb": frozenset({"logs:read"}), "clienta": frozenset({"logs:read"})}, frozenset(), [["clienta", "clientb"]]),
+        ({"": frozenset({"logs:read"})}, frozenset(), [[""]]),
+        ({"revysmc": frozenset({"alerts:write"})}, frozenset(), [[]]),
+    ],
+)
+def test_scope_groups_both_queries_carry_the_same_scope_clause(
+    client, store, mocker, scopes, roles, expected_client_params
+):
+    mocker.patch("time.time", return_value=2_000_000_000)
+    principal = store.add_user("someone", roles=roles, scopes=scopes)
+    pool = _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
+    _login_session(client, principal)
+
+    resp = client.get("/api/dashboard/groups?window=24h&levels=critical,warning")
+    assert resp.status_code == 200
+
+    count_sql, count_params = pool._cursor.executed[0]
+    rows_sql, rows_params = pool._cursor.executed[1]
+    clause, _ = dashboard_routes._scope_clause(
+        principal.visible_clients("logs:read"), principal.is_master_admin()
+    )
+    assert clause in count_sql and clause in rows_sql
+    if roles:
+        assert "IS NOT NULL" not in count_sql and "IS NOT NULL" not in rows_sql
+    else:
+        assert "client IS NOT NULL AND client != ''" in count_sql
+        assert "client IS NOT NULL AND client != ''" in rows_sql
+    assert count_params == [2_000_000_000 - 86400] + expected_client_params
+    assert rows_params == [2_000_000_000 - 86400, ["critical", "warning"]] + expected_client_params + [30]
 
 
 def test_scope_single_client_user_gets_exactly_their_client_filtered_plus_null_exclusion(client, store, mocker):
@@ -556,12 +590,12 @@ def test_window_invalid_value_is_400(client, store, bad_window):
     assert resp.status_code == 400
 
 
-def test_window_invalid_value_is_400_for_critical_too(client, store):
+def test_window_invalid_value_is_400_for_groups_too(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
+    _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical?window=bogus")
+    resp = client.get("/api/dashboard/groups?window=bogus")
     assert resp.status_code == 400
 
 
@@ -593,172 +627,189 @@ def test_summary_zero_fills_levels_missing_from_partial_results(client, store):
 
 
 # ---------------------------------------------------------------------------
-# /api/dashboard/critical -- total vs. page size, row shape, pagination
+# /api/dashboard/groups -- levels parsing, exact SQL, tree assembly
 # ---------------------------------------------------------------------------
 
-def test_critical_total_reflects_full_matching_count_not_page_size(client, store):
-    principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    ts = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
-    rows = [
-        {
-            "id": 1,
-            "timestamp": ts,
-            "category": "system",
-            "title": "T1",
-            "message": "M1",
-            "source": "src1",
-            "client": "revysmc",
-            "metadata": {"k": "v"},
-            "ingestion_source": "http",
-        },
-        {
-            "id": 2,
-            "timestamp": ts,
-            "category": "system",
-            "title": "T2",
-            "message": "M2",
-            "source": "src2",
-            "client": None,
-            "metadata": None,
-            "ingestion_source": "mqtt",
-        },
-    ]
-    _install_pool(client.application, FakeCursor(fetchall_results=[rows], fetchone_results=[{"count": 137}]))
-    _login_session(client, principal)
+_TS = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
+_TS_EPOCH = int(_TS.timestamp())
 
-    resp = client.get("/api/dashboard/critical?limit=2")
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["total"] == 137  # full matching count, NOT len(alerts) == 2
-    assert len(body["alerts"]) == 2
-    assert body["alerts"][0] == {
-        "id": 1,
-        "timestamp": int(ts.timestamp()),
+
+def _count_row(client_name, source, level, count, ts=_TS):
+    return {"client": client_name, "source": source, "level": level, "count": count, "last_seen": ts}
+
+
+def _alert_row(alert_id, client_name, source, level="critical", ts=_TS):
+    return {
+        "id": alert_id,
+        "timestamp": ts,
+        "level": level,
         "category": "system",
-        "title": "T1",
-        "message": "M1",
-        "source": "src1",
-        "client": "revysmc",
-        "metadata": {"k": "v"},
+        "title": f"T{alert_id}",
+        "message": f"M{alert_id}",
+        "source": source,
+        "client": client_name,
+        "metadata": None,
         "ingestion_source": "http",
     }
 
 
-def test_critical_message_is_full_untruncated(client, store):
-    principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    long_message = "x" * 5000
-    ts = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
-    rows = [
-        {
-            "id": 1,
-            "timestamp": ts,
-            "category": "system",
-            "title": "T",
-            "message": long_message,
-            "source": "src",
-            "client": None,
-            "metadata": None,
-            "ingestion_source": "http",
-        }
-    ]
-    _install_pool(client.application, FakeCursor(fetchall_results=[rows], fetchone_results=[{"count": 1}]))
-    _login_session(client, principal)
-
-    resp = client.get("/api/dashboard/critical")
-    assert len(resp.get_json()["alerts"][0]["message"]) == 5000
-
-
-def test_critical_query_filters_level_critical_and_orders_by_timestamp_desc(client, store, mocker):
+def test_groups_exact_sql_for_master_admin(client, store, mocker):
     mocker.patch("time.time", return_value=2_000_000_000)
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    pool = _install_pool(
-        client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}])
-    )
+    pool = _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
     _login_session(client, principal)
 
-    client.get("/api/dashboard/critical?window=1h&offset=10&limit=25")
+    client.get("/api/dashboard/groups?window=1h&levels=warning,critical")
 
     count_sql, count_params = pool._cursor.executed[0]
     rows_sql, rows_params = pool._cursor.executed[1]
-
     assert count_sql == (
-        "SELECT COUNT(*) AS count FROM alerts WHERE timestamp >= to_timestamp(%s) AND level = 'critical'"
+        "SELECT COALESCE(client, '') AS client, source, level, COUNT(*) AS count, MAX(timestamp) AS last_seen "
+        "FROM alerts WHERE timestamp >= to_timestamp(%s) GROUP BY 1, 2, 3"
     )
     assert count_params == [2_000_000_000 - 3600]
-
     assert rows_sql == (
-        "SELECT id, timestamp, category, title, message, source, client, metadata, ingestion_source "
-        "FROM alerts WHERE timestamp >= to_timestamp(%s) AND level = 'critical' "
-        "ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+        "SELECT id, timestamp, level, category, title, message, source, client, metadata, ingestion_source "
+        "FROM (SELECT id, timestamp, level, category, title, message, source, client, metadata, ingestion_source, "
+        "ROW_NUMBER() OVER (PARTITION BY COALESCE(client, ''), source ORDER BY timestamp DESC, id DESC) AS rn "
+        "FROM alerts WHERE timestamp >= to_timestamp(%s) AND level = ANY(%s)) ranked "
+        "WHERE rn <= %s ORDER BY timestamp DESC, id DESC"
     )
-    assert rows_params == [2_000_000_000 - 3600, 25, 10]
+    # Levels come back in canonical order regardless of request order.
+    assert rows_params == [2_000_000_000 - 3600, ["critical", "warning"], 30]
 
 
-# ---------------------------------------------------------------------------
-# limit/offset validation + clamping
-# ---------------------------------------------------------------------------
-
-def test_limit_at_exactly_200_is_unchanged(client, store):
+def test_groups_levels_default_to_critical(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
+    pool = _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical?limit=200")
+    resp = client.get("/api/dashboard/groups")
+    assert resp.get_json()["levels"] == ["critical"]
+    assert resp.get_json()["per_group"] == 30
+    assert pool._cursor.executed[1][1][1] == ["critical"]
+
+
+def test_groups_levels_are_trimmed_lowercased_and_deduped(client, store):
+    principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
+    _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
+    _login_session(client, principal)
+
+    resp = client.get("/api/dashboard/groups?levels=%20Debug%20,info,INFO,")
     assert resp.status_code == 200
-    assert resp.get_json()["limit"] == 200
+    assert resp.get_json()["levels"] == ["info", "debug"]
 
 
-def test_limit_over_200_is_clamped_not_rejected(client, store):
+def test_groups_empty_levels_skips_rows_query(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    pool = _install_pool(
-        client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}])
-    )
+    pool = _install_pool(client.application, FakeCursor(fetchall_results=[[_count_row("acme-co", "web-01", "info", 3)]]))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical?limit=99999")
+    resp = client.get("/api/dashboard/groups?levels=")
     assert resp.status_code == 200
-    assert resp.get_json()["limit"] == 200
-    _, rows_params = pool._cursor.executed[1]
-    assert rows_params[-2] == 200  # LIMIT bound param actually sent to Postgres is clamped too
+    assert len(pool._cursor.executed) == 1  # counts only
+    body = resp.get_json()
+    assert body["levels"] == []
+    group = body["clients"][0]["sources"][0]
+    assert group["counts"]["info"] == 3
+    assert group["matched"] == 0
+    assert group["alerts"] == []
 
 
-def test_limit_201_is_clamped_to_200(client, store):
+@pytest.mark.parametrize("bad_levels", ["fatal", "critical,bogus", "error"])
+def test_groups_unknown_level_is_400(client, store, bad_levels):
+    # Note "error" is an INGESTION alias for critical, not a stored level --
+    # the dashboard only accepts the five canonical stored values.
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
+    _install_pool(client.application, FakeCursor(fetchall_results=[[], []]))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical?limit=201")
-    assert resp.get_json()["limit"] == 200
-
-
-@pytest.mark.parametrize("bad_limit", ["0", "-1", "abc", ""])
-def test_limit_invalid_is_400(client, store, bad_limit):
-    principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
-    _login_session(client, principal)
-
-    resp = client.get(f"/api/dashboard/critical?limit={bad_limit}")
+    resp = client.get(f"/api/dashboard/groups?levels={bad_levels}")
     assert resp.status_code == 400
 
 
-@pytest.mark.parametrize("bad_offset", ["-1", "abc", ""])
-def test_offset_invalid_is_400(client, store, bad_offset):
+def test_groups_builds_sorted_tree_with_counts_matched_and_alerts(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
+    later = datetime(2026, 7, 20, 13, 0, 0, tzinfo=timezone.utc)
+    count_rows = [
+        _count_row("", "cron", "critical", 1),
+        _count_row("zeta", "b-src", "info", 9),
+        _count_row("acme-co", "web-02", "debug", 4, ts=later),
+        _count_row("acme-co", "Web-01", "critical", 2),
+        _count_row("acme-co", "Web-01", "warning", 5),
+        _count_row("acme-co", "Web-01", "info", 40),
+    ]
+    alert_rows = [
+        _alert_row(11, "acme-co", "Web-01", "warning", ts=later),
+        _alert_row(10, "acme-co", "Web-01", "critical"),
+        _alert_row(12, None, "cron", "critical"),
+    ]
+    _install_pool(client.application, FakeCursor(fetchall_results=[count_rows, alert_rows]))
     _login_session(client, principal)
 
-    resp = client.get(f"/api/dashboard/critical?offset={bad_offset}")
-    assert resp.status_code == 400
+    resp = client.get("/api/dashboard/groups?levels=critical,warning")
+    assert resp.status_code == 200
+    clients = resp.get_json()["clients"]
+
+    # Alphabetical clients, clientless '' always last.
+    assert [c["client"] for c in clients] == ["acme-co", "zeta", ""]
+
+    acme = clients[0]
+    assert [s["source"] for s in acme["sources"]] == ["Web-01", "web-02"]  # case-insensitive
+    assert acme["counts"] == {"critical": 2, "warning": 5, "notice": 0, "info": 40, "debug": 4}
+    assert acme["matched"] == 7
+    assert acme["last_seen"] == int(later.timestamp())
+
+    web01 = acme["sources"][0]
+    assert web01["counts"] == {"critical": 2, "warning": 5, "notice": 0, "info": 40, "debug": 0}
+    assert web01["matched"] == 7  # may exceed len(alerts) -- the "showing 2 of 7" case
+    assert web01["last_seen"] == _TS_EPOCH
+    assert [a["id"] for a in web01["alerts"]] == [11, 10]  # SQL order (newest first) preserved
+    assert web01["alerts"][0] == {
+        "id": 11,
+        "timestamp": int(later.timestamp()),
+        "level": "warning",
+        "category": "system",
+        "title": "T11",
+        "message": "M11",
+        "source": "Web-01",
+        "client": "acme-co",
+        "metadata": None,
+        "ingestion_source": "http",
+    }
+
+    web02 = acme["sources"][1]
+    assert web02["matched"] == 0
+    assert web02["alerts"] == []
+
+    zeta = clients[1]
+    assert zeta["matched"] == 0
+    assert zeta["counts"]["info"] == 9
+
+    clientless = clients[2]
+    assert [a["id"] for a in clientless["sources"][0]["alerts"]] == [12]  # NULL client row -> '' group
 
 
-def test_offset_zero_default_when_omitted(client, store):
+def test_groups_message_is_full_untruncated(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
-    _install_pool(client.application, FakeCursor(fetchall_results=[[]], fetchone_results=[{"count": 0}]))
+    row = _alert_row(1, "acme-co", "src")
+    row["message"] = "x" * 5000
+    _install_pool(
+        client.application,
+        FakeCursor(fetchall_results=[[_count_row("acme-co", "src", "critical", 1)], [row]]),
+    )
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical")
-    assert resp.get_json()["offset"] == 0
-    assert resp.get_json()["limit"] == 50  # DEFAULT_LIMIT
+    resp = client.get("/api/dashboard/groups")
+    assert len(resp.get_json()["clients"][0]["sources"][0]["alerts"][0]["message"]) == 5000
+
+
+def test_groups_ignores_out_of_enum_level_in_counts():
+    tree = dashboard_routes._build_group_tree(
+        [_count_row("a", "s", "critical", 1), _count_row("a", "s", "bogus", 99)], [], ["critical"]
+    )
+    assert tree[0]["counts"] == {"critical": 1, "warning": 0, "notice": 0, "info": 0, "debug": 0}
+    assert tree[0]["matched"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -789,12 +840,12 @@ def test_summary_503_when_query_execution_fails_and_rolls_back(client, store):
     assert pool.putconn_calls == pool.connections  # connection still returned to the pool
 
 
-def test_critical_503_when_pool_getconn_fails(client, store):
+def test_groups_503_when_pool_getconn_fails(client, store):
     principal = store.add_user("root", roles=frozenset({"master_admin"}), scopes=MASTER_ADMIN_SCOPES)
     _install_pool(client.application, getconn_exception=RuntimeError("pool exhausted"))
     _login_session(client, principal)
 
-    resp = client.get("/api/dashboard/critical")
+    resp = client.get("/api/dashboard/groups")
     assert resp.status_code == 503
     assert resp.get_json()["error"] == "database unavailable"
 

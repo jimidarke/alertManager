@@ -9,10 +9,11 @@
  * + its own <768px full-screen rule, `table`/`thead`/`tbody`, `.badge*`,
  * `.mono`, `button`/`.btn*`) is intentionally NOT redefined here -- see
  * base.css for those. This file only adds the dashboard-specific pieces:
- * the card grid, the critical-card pulse, the critical table's
- * Time/Client-pill/Alert cell styling, the modal's dashboard-specific
- * content (definition grid, message, metadata table, raw-JSON <details>),
- * and the empty-state block.
+ * the card grid (cards are level-filter toggle buttons), the critical-card
+ * pulse, the client -> source grouped <details> tree and its per-source
+ * Time/Level/Alert rows, the modal's dashboard-specific content
+ * (definition grid, message, metadata table, raw-JSON <details>), and the
+ * empty-state block.
  */
 
 /* ============================================
@@ -69,24 +70,51 @@
     margin-bottom: var(--spacing-lg);
 }
 
+/* Cards are <button>s (multi-select level filter toggles) -- base.css's
+   generic `button` chrome is overridden here. Unselected cards are muted;
+   `.selected` (mirrored by aria-pressed) gets the level's tinted fill. */
 .dashboard-card {
+    display: block;
+    width: 100%;
     background: var(--bg-secondary);
-    border-radius: var(--border-radius-lg);
+    color: inherit;
+    border: 1px solid transparent;
     border-top: 4px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
     padding: var(--spacing-lg) var(--spacing-md);
     text-align: center;
-    transition: transform var(--transition-fast);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: transform var(--transition-fast), opacity var(--transition-fast), background var(--transition-fast);
 }
 
-.dashboard-card[data-level="critical"] { border-top-color: var(--level-critical); cursor: pointer; }
+.dashboard-card:hover {
+    background: var(--bg-tertiary);
+    opacity: 0.85;
+    transform: translateY(-1px);
+}
+
+.dashboard-card:focus-visible {
+    outline: 2px solid var(--accent-focus);
+    outline-offset: 2px;
+}
+
+.dashboard-card.selected,
+.dashboard-card.selected:hover {
+    opacity: 1;
+}
+
+.dashboard-card[data-level="critical"] { border-top-color: var(--level-critical); }
 .dashboard-card[data-level="warning"]  { border-top-color: var(--level-warning); }
 .dashboard-card[data-level="notice"]   { border-top-color: var(--level-notice); }
 .dashboard-card[data-level="info"]     { border-top-color: var(--level-info); }
 .dashboard-card[data-level="debug"]    { border-top-color: var(--level-debug); }
 
-.dashboard-card[data-level="critical"]:hover {
-    transform: translateY(-1px);
-}
+.dashboard-card.selected[data-level="critical"] { background: var(--level-critical-bg); border-color: var(--level-critical); }
+.dashboard-card.selected[data-level="warning"]  { background: var(--level-warning-bg);  border-color: var(--level-warning); }
+.dashboard-card.selected[data-level="notice"]   { background: var(--level-notice-bg);   border-color: var(--level-notice); }
+.dashboard-card.selected[data-level="info"]     { background: var(--level-info-bg);     border-color: var(--level-info); }
+.dashboard-card.selected[data-level="debug"]    { background: var(--level-debug-bg);    border-color: var(--level-debug); }
 
 .dashboard-card-count {
     color: var(--text-title);
@@ -124,19 +152,175 @@
 }
 
 /* ============================================
-   Critical alerts table
+   Grouped view: client -> source nested <details>
    ============================================ */
-.dashboard-critical h2 {
+.dashboard-groups-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm) var(--spacing-md);
     margin-bottom: var(--spacing-md);
+}
+
+.dashboard-groups-header h2 {
+    margin: 0;
+}
+
+.dashboard-groups-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+}
+
+.dashboard-groups-toolbar .btn {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+.group-client {
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    margin-bottom: var(--spacing-sm);
+}
+
+.group-client-body {
+    padding: 0 var(--spacing-sm) var(--spacing-sm) var(--spacing-lg);
+}
+
+.group-source {
+    border-left: 2px solid var(--bg-surface);
+    margin-top: var(--spacing-xs);
+}
+
+.group-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs) var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.group-summary::-webkit-details-marker {
+    display: none;
+}
+
+/* Caret -- rotates when the group is open. */
+.group-summary::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 6px solid var(--text-secondary);
+    transition: transform var(--transition-fast);
+}
+
+details[open] > .group-summary::before {
+    transform: rotate(90deg);
+}
+
+.group-summary:hover {
+    background: var(--bg-tertiary);
+}
+
+.group-summary:focus-visible {
+    outline: 2px solid var(--accent-focus);
+    outline-offset: -2px;
+}
+
+.group-client > .group-summary {
+    border-radius: var(--border-radius-lg);
+}
+
+.group-client > .group-summary .group-name {
+    color: var(--text-title);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.group-source > .group-summary {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+.group-source > .group-summary .group-name {
+    color: var(--text-value);
+}
+
+.group-name-empty {
+    font-style: italic;
+}
+
+.group-badges {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.group-badges .badge-muted {
+    opacity: 0.45;
+}
+
+.group-meta {
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* Groups with no rows for the selected levels: still listed, de-emphasized. */
+.group-dim > .group-summary {
+    opacity: 0.6;
+}
+
+.group-empty {
+    padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
+    color: var(--text-secondary);
 }
 
 .dashboard-table-wrap {
     overflow-x: auto;
 }
 
-#dashboard-critical-table .col-time   { width: 190px; white-space: nowrap; }
-#dashboard-critical-table .col-client { width: 140px; }
-#dashboard-critical-table .col-source { width: 160px; }
+/* One line per alert: relative time (absolute on hover via the cell's
+   title), level badge, then title + message ellipsized to the row. */
+.group-table {
+    table-layout: fixed;
+    width: 100%;
+    margin: 0 0 var(--spacing-xs);
+}
+
+.group-table td {
+    padding: 4px var(--spacing-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.group-table tr {
+    cursor: pointer;
+}
+
+.group-table tr:hover td {
+    background: var(--bg-tertiary);
+}
+
+.group-table .col-time  { width: 84px; text-overflow: clip; }
+.group-table .col-level { width: 96px; text-overflow: clip; }
+
+.group-table .time-absolute {
+    display: none;
+}
+
+.group-table .alert-cell-title,
+.group-table .alert-cell-message {
+    display: inline;
+    margin: 0 var(--spacing-sm) 0 0;
+}
 
 .time-relative {
     display: block;
@@ -147,19 +331,6 @@
     display: block;
     color: var(--text-secondary);
     font-size: 11px;
-}
-
-.client-pill {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
-    background: var(--bg-surface);
-    color: var(--text-value);
-    font-size: 12px;
-}
-
-.client-pill.client-pill-empty {
-    color: var(--text-secondary);
 }
 
 .alert-cell-title {
@@ -173,14 +344,7 @@
     color: var(--text-secondary);
     font-size: 12px;
     margin-top: 2px;
-}
-
-#dashboard-critical-tbody tr {
-    cursor: pointer;
-}
-
-.dashboard-load-more {
-    margin-top: var(--spacing-md);
+    overflow-wrap: anywhere;
 }
 
 /* ============================================
@@ -287,7 +451,18 @@
         grid-template-columns: 1fr;
     }
 
-    #dashboard-critical-table .col-source {
-        display: none;
+    .group-client-body {
+        padding-left: var(--spacing-sm);
+    }
+
+    .group-summary {
+        padding-left: var(--spacing-sm);
+        padding-right: var(--spacing-sm);
+    }
+
+    .group-table .col-time  { width: 72px; }
+
+    #dashboard-groups-showing {
+        flex-basis: 100%;
     }
 }

@@ -2,8 +2,10 @@
 Alert Manager - gateway.dashboard.routes
 
 `dashboard_bp`: `GET /dashboard` (renders `templates/dashboard.html`, built
-in Task 25 atop Task 24's `layout.html`), `GET /api/dashboard/summary`,
-`GET /api/dashboard/critical` (Task 22, docs/OVERHAUL_PLAN.md section 4.6).
+in Task 25 atop Task 24's `layout.html`), `GET /api/dashboard/summary`
+(Task 22, docs/OVERHAUL_PLAN.md section 4.6), `GET /api/dashboard/groups`
+(the client -> source grouped view; replaced the flat critical-only
+`/api/dashboard/critical` table).
 
 --------------------------------------------------------------------------
 1. Auth decorator decision: `require_auth(methods=SESSION_ONLY)`, NOT
@@ -26,7 +28,7 @@ direct call to `principal.visible_clients(DASHBOARD_PERMISSION)` inside
 each view, used to build the query's scope predicate (`_scope_clause`
 below). This means a session-authenticated user holding ZERO `logs:read`
 scopes for any client is not rejected with a 403 -- they simply get back
-an all-zero summary / an empty critical list (`visible_clients()` returns
+an all-zero summary / an empty group list (`visible_clients()` returns
 an empty frozenset, `_scope_clause` turns that into `client = ANY(%s)`
 with an empty array, which matches no rows in Postgres). This is
 deliberate, not an oversight: the "authorization decision" for this
@@ -150,7 +152,7 @@ plausible role-scope misconfiguration (`''` half).
 
 `_scope_clause`/`_scope_repr` are the ONLY functions in this module that
 touch client scoping, and every query builder below (`_summary_query`,
-`_critical_count_query`, `_critical_rows_query`) routes through
+`_group_counts_query`, `_group_rows_query`) routes through
 `_scope_clause` -- there is exactly one place a reviewer needs to look to
 audit the entire cross-client leak surface of this blueprint. No route in
 this module ever reads a `client` query parameter, form field, or JSON
@@ -158,7 +160,7 @@ body key for scoping purposes -- the scope is ALWAYS server-derived from
 `g.principal.visible_clients(...)`, never from anything request-supplied.
 
 --------------------------------------------------------------------------
-3. Window enum, `/critical` pagination, and DB-pool-down 503 shape
+3. Window enum, `/groups` level filter, and DB-pool-down 503 shape
 --------------------------------------------------------------------------
 `window` is validated against the exact 8-value enum the brief specifies
 (`_WINDOW_SECONDS`); anything else, including a missing/malformed value
@@ -168,17 +170,16 @@ codebase's general convention of defaulting optional query params rather
 than demanding every one be spelled out, e.g. `logs/routes.py`'s
 `position`/`lines` defaults).
 
-`/api/dashboard/critical`'s `limit` is CLAMPED to `MAX_LIMIT` (200), not
-rejected with a 400, when a caller asks for more -- a judgment call (the
-brief explicitly leaves this open). Clamping was chosen over rejection
-because an over-large `limit` is not a caller error in the way a
-malformed/negative value is (this is a browser dashboard, not a strict
-API contract callers need hard feedback from); silently capping keeps the
-page working with a slightly smaller page than requested rather than
-surfacing an error for what is, from the caller's perspective, a harmless
-request. `limit < 1` and `offset < 0` (or either being non-numeric) ARE
-rejected with 400 -- those are not "reasonable but oversized", they are
-malformed.
+`/api/dashboard/groups`'s `levels` is a comma-separated subset of the five
+canonical levels (trimmed, lowercased, deduped, returned in canonical
+order); an unknown level is a 400. A missing `levels` defaults to
+`critical` (the page's default selection); an EMPTY `levels=` is valid and
+means "group headers/counts only" -- the per-group rows query is skipped
+entirely. The per-group row cap (`PER_GROUP_LIMIT`, 30) is a server
+constant, not a request parameter: there is no pagination on this
+endpoint -- deep history is the log viewer's job. The counts query is
+deliberately NOT level-filtered, so every group header shows its full
+per-level picture regardless of which levels are selected.
 
 DB pool down: `gateway.db.pooled_cursor()` (hoisted there in the final
 whole-branch cleanup pass -- this module originally carried its own copy,
@@ -243,8 +244,9 @@ DEFAULT_WINDOW = "24h"
 # `/api/dashboard/summary`'s `counts`, zero-filled.
 _LEVELS: Tuple[str, ...] = ("critical", "warning", "notice", "info", "debug")
 
-DEFAULT_LIMIT = 50
-MAX_LIMIT = 200
+# Latest-N alerts returned per (client, source) group by /api/dashboard/groups.
+PER_GROUP_LIMIT = 30
+DEFAULT_LEVELS = "critical"
 
 
 def _db_pool():
@@ -331,40 +333,42 @@ def _summary_query(since: int, visible: Any, is_master_admin: bool) -> Tuple[str
     return sql, [since] + clause_params
 
 
-def _critical_count_query(since: int, visible: Any, is_master_admin: bool) -> Tuple[str, List[Any]]:
+def _group_counts_query(since: int, visible: Any, is_master_admin: bool) -> Tuple[str, List[Any]]:
+    """Per-(client, source, level) counts + last-seen over the whole window -- NOT level-filtered (see module docstring section 3)."""
     clause, clause_params = _scope_clause(visible, is_master_admin)
     sql = (
-        "SELECT COUNT(*) AS count FROM alerts "
-        "WHERE timestamp >= to_timestamp(%s) AND level = 'critical'" + clause
+        "SELECT COALESCE(client, '') AS client, source, level, COUNT(*) AS count, MAX(timestamp) AS last_seen "
+        "FROM alerts WHERE timestamp >= to_timestamp(%s)" + clause + " GROUP BY 1, 2, 3"
     )
     return sql, [since] + clause_params
 
 
-def _critical_rows_query(
-    since: int, visible: Any, is_master_admin: bool, limit: int, offset: int
+def _group_rows_query(
+    since: int, visible: Any, is_master_admin: bool, levels: List[str], per_group: int
 ) -> Tuple[str, List[Any]]:
+    """Latest `per_group` alerts per (client, source) among the selected `levels`."""
     clause, clause_params = _scope_clause(visible, is_master_admin)
     sql = (
-        "SELECT id, timestamp, category, title, message, source, client, metadata, ingestion_source "
-        "FROM alerts WHERE timestamp >= to_timestamp(%s) AND level = 'critical'" + clause +
-        " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+        "SELECT id, timestamp, level, category, title, message, source, client, metadata, ingestion_source "
+        "FROM (SELECT id, timestamp, level, category, title, message, source, client, metadata, ingestion_source, "
+        "ROW_NUMBER() OVER (PARTITION BY COALESCE(client, ''), source ORDER BY timestamp DESC, id DESC) AS rn "
+        "FROM alerts WHERE timestamp >= to_timestamp(%s) AND level = ANY(%s)" + clause + ") ranked "
+        "WHERE rn <= %s ORDER BY timestamp DESC, id DESC"
     )
-    return sql, [since] + clause_params + [limit, offset]
+    return sql, [since, levels] + clause_params + [per_group]
 
 
-def _serialize_critical_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    `alerts.timestamp` is `TIMESTAMPTZ` (sql/init/01-schema.sql); psycopg2
-    hands it back as a timezone-aware `datetime`, converted here to a Unix
-    epoch integer per CLAUDE.md's "Timestamps are always communicated ...
-    Unix epoch". `message` is passed through FULL/untruncated -- truncation
-    is explicitly Task 25's (client-side) job, per the brief.
-    """
-    ts = row["timestamp"]
-    epoch = int(ts.timestamp()) if hasattr(ts, "timestamp") else int(ts)
+def _to_epoch(ts: Any) -> int:
+    """`alerts.timestamp` is `TIMESTAMPTZ`; psycopg2 returns an aware `datetime` -- epoch int per CLAUDE.md."""
+    return int(ts.timestamp()) if hasattr(ts, "timestamp") else int(ts)
+
+
+def _serialize_alert_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """`message` is passed through FULL/untruncated -- truncation is the frontend's job."""
     return {
         "id": row["id"],
-        "timestamp": epoch,
+        "timestamp": _to_epoch(row["timestamp"]),
+        "level": row["level"],
         "category": row["category"],
         "title": row["title"],
         "message": row["message"],
@@ -373,6 +377,60 @@ def _serialize_critical_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "metadata": row["metadata"],
         "ingestion_source": row["ingestion_source"],
     }
+
+
+def _sort_key(name: str) -> Tuple[bool, str, str]:
+    """Alphabetical, case-insensitive, with the clientless/empty group always last."""
+    return (name == "", name.lower(), name)
+
+
+def _build_group_tree(
+    count_rows: List[Dict[str, Any]], alert_rows: List[Dict[str, Any]], levels: List[str]
+) -> List[Dict[str, Any]]:
+    """
+    Assembles `/api/dashboard/groups`'s `clients` list from the two queries'
+    rows. Every (client, source) with ANY activity in the window appears,
+    with zero-filled per-level `counts`, `last_seen` (epoch), `matched` (the
+    count summed over the selected `levels` -- may exceed `len(alerts)`,
+    which is capped at PER_GROUP_LIMIT), and its `alerts` (newest first).
+    Clients aggregate their sources' counts/matched/last_seen.
+    """
+    clients: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for row in count_rows:
+        level = row["level"]
+        if level not in _LEVELS:
+            continue  # same silent exclusion as dashboard_summary()
+        sources = clients.setdefault(row["client"], {})
+        group = sources.setdefault(
+            row["source"],
+            {"source": row["source"], "counts": {lvl: 0 for lvl in _LEVELS}, "last_seen": 0, "alerts": []},
+        )
+        group["counts"][level] += row["count"]
+        group["last_seen"] = max(group["last_seen"], _to_epoch(row["last_seen"]))
+
+    for row in alert_rows:
+        group = clients.get(row["client"] or "", {}).get(row["source"])
+        if group is not None:
+            group["alerts"].append(_serialize_alert_row(row))
+
+    result = []
+    for client_name in sorted(clients, key=_sort_key):
+        sources = [clients[client_name][name] for name in sorted(clients[client_name], key=_sort_key)]
+        client_counts = {lvl: 0 for lvl in _LEVELS}
+        for group in sources:
+            group["matched"] = sum(group["counts"][lvl] for lvl in levels)
+            for lvl in _LEVELS:
+                client_counts[lvl] += group["counts"][lvl]
+        result.append(
+            {
+                "client": client_name,
+                "counts": client_counts,
+                "last_seen": max(group["last_seen"] for group in sources),
+                "matched": sum(group["matched"] for group in sources),
+                "sources": sources,
+            }
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -385,25 +443,13 @@ def _parse_window_seconds(raw: str) -> Tuple[Optional[int], Optional[Tuple[Respo
     return _WINDOW_SECONDS[raw], None
 
 
-def _parse_offset(raw: str) -> Tuple[Optional[int], Optional[Tuple[Response, int]]]:
-    try:
-        offset = int(raw)
-    except (TypeError, ValueError):
-        return None, _bad_request("offset must be an integer")
-    if offset < 0:
-        return None, _bad_request("offset must be >= 0")
-    return offset, None
-
-
-def _parse_limit(raw: str) -> Tuple[Optional[int], Optional[Tuple[Response, int]]]:
-    """`limit` is clamped to MAX_LIMIT when over, rejected only when non-numeric or < 1. See module docstring section 3."""
-    try:
-        limit = int(raw)
-    except (TypeError, ValueError):
-        return None, _bad_request("limit must be an integer")
-    if limit < 1:
-        return None, _bad_request("limit must be >= 1")
-    return min(limit, MAX_LIMIT), None
+def _parse_levels(raw: str) -> Tuple[Optional[List[str]], Optional[Tuple[Response, int]]]:
+    """Comma-separated level subset -> canonical-order list; '' -> []; unknown level -> 400. See module docstring section 3."""
+    requested = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    unknown = requested - set(_LEVELS)
+    if unknown:
+        return None, _bad_request(f"invalid levels {sorted(unknown)}; must be a subset of {list(_LEVELS)}")
+    return [level for level in _LEVELS if level in requested], None
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +476,7 @@ def view_dashboard():
     function has always used) purely to decide the initial HTTP status
     code (200 vs. 503) and whether to render a server-side "DB down"
     banner on first paint -- `dashboard.html`'s own JS independently
-    fetches `/api/dashboard/summary` and `/api/dashboard/critical` on load
+    fetches `/api/dashboard/summary` and `/api/dashboard/groups` on load
     (and on every subsequent timeframe change / auto-refresh tick) and
     handles a 503 from THOSE calls with its own client-side banner
     (`_db_unavailable_response`'s JSON shape); the two paths are
@@ -492,23 +538,19 @@ def dashboard_summary():
 
 
 # ---------------------------------------------------------------------------
-# GET /api/dashboard/critical
+# GET /api/dashboard/groups
 # ---------------------------------------------------------------------------
 
-@dashboard_bp.route("/api/dashboard/critical", methods=["GET"])
+@dashboard_bp.route("/api/dashboard/groups", methods=["GET"])
 @require_auth(methods=SESSION_ONLY)
-def dashboard_critical():
-    """`{alerts: [{id, timestamp, category, title, message, source, client, metadata, ingestion_source}, ...], total, ...}`."""
+def dashboard_groups():
+    """`{clients: [{client, counts, last_seen, matched, sources: [{source, counts, last_seen, matched, alerts}]}], levels, per_group, ...}`."""
     window = request.args.get("window", DEFAULT_WINDOW)
     seconds, error = _parse_window_seconds(window)
     if error is not None:
         return error
 
-    offset, error = _parse_offset(request.args.get("offset", "0"))
-    if error is not None:
-        return error
-
-    limit, error = _parse_limit(request.args.get("limit", str(DEFAULT_LIMIT)))
+    levels, error = _parse_levels(request.args.get("levels", DEFAULT_LEVELS))
     if error is not None:
         return error
 
@@ -517,26 +559,27 @@ def dashboard_critical():
     visible = g.principal.visible_clients(DASHBOARD_PERMISSION)
     is_master_admin = g.principal.is_master_admin()
 
-    count_sql, count_params = _critical_count_query(since, visible, is_master_admin)
-    rows_sql, rows_params = _critical_rows_query(since, visible, is_master_admin, limit, offset)
+    counts_sql, counts_params = _group_counts_query(since, visible, is_master_admin)
 
     try:
         with pooled_cursor(_db_pool()) as cur:
-            cur.execute(count_sql, count_params)
-            total = cur.fetchone()["count"]
-            cur.execute(rows_sql, rows_params)
-            rows = cur.fetchall()
+            cur.execute(counts_sql, counts_params)
+            count_rows = cur.fetchall()
+            alert_rows = []
+            if levels:
+                rows_sql, rows_params = _group_rows_query(since, visible, is_master_admin, levels, PER_GROUP_LIMIT)
+                cur.execute(rows_sql, rows_params)
+                alert_rows = cur.fetchall()
     except DBUnavailable as exc:
         return _db_unavailable_response(exc)
 
     return jsonify(
         {
-            "alerts": [_serialize_critical_row(row) for row in rows],
-            "total": total,
+            "clients": _build_group_tree(count_rows, alert_rows, levels),
+            "levels": levels,
+            "per_group": PER_GROUP_LIMIT,
             "since": since,
             "scope": _scope_repr(visible),
             "generated_at": now,
-            "offset": offset,
-            "limit": limit,
         }
     )

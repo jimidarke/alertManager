@@ -41,21 +41,30 @@ const AlertManagerDashboard = require(dashboardJsPath);
 const {
     VALID_WINDOWS,
     DEFAULT_WINDOW,
-    DEFAULT_LIMIT,
+    DEFAULT_LEVELS,
     MESSAGE_TRUNCATE_LENGTH,
     LEVELS_ORDER,
     isValidWindow,
     readPersistedWindow,
     persistWindow,
-    nextOffset,
-    hasMore,
+    normalizeLevels,
+    readPersistedLevels,
+    persistLevels,
+    toggleLevel,
+    levelsLabel,
+    clientKey,
+    sourceKey,
+    isGroupOpen,
+    recordCollapseChoice,
+    readCollapseState,
+    persistCollapseState,
     truncateMessage,
     buildSummaryUrl,
-    buildCriticalUrl,
+    buildGroupsUrl,
     clientDisplayValue,
     DashboardApiError,
     fetchSummary,
-    fetchCritical,
+    fetchGroups,
 } = AlertManagerDashboard;
 
 // ---------------------------------------------------------------------
@@ -103,8 +112,8 @@ test("DEFAULT_WINDOW is 24h, matching the server's DEFAULT_WINDOW", () => {
     assert.equal(DEFAULT_WINDOW, "24h");
 });
 
-test("DEFAULT_LIMIT is 50, matching the server's DEFAULT_LIMIT", () => {
-    assert.equal(DEFAULT_LIMIT, 50);
+test("DEFAULT_LEVELS is critical only, matching the server's DEFAULT_LEVELS", () => {
+    assert.deepEqual(DEFAULT_LEVELS, ["critical"]);
 });
 
 test("MESSAGE_TRUNCATE_LENGTH is 120 per the brief", () => {
@@ -179,32 +188,101 @@ test("round-trip: persistWindow then readPersistedWindow returns the same value"
 });
 
 // ---------------------------------------------------------------------
-// Pagination offset math
+// Level-filter selection (cards are multi-select toggles)
 // ---------------------------------------------------------------------
 
-test("nextOffset advances by the fixed page limit, not by rows actually returned", () => {
-    assert.equal(nextOffset(0, 50), 50);
-    assert.equal(nextOffset(50, 50), 100);
-    assert.equal(nextOffset(100, 50), 150);
+test("normalizeLevels drops unknown values, dedupes, and returns canonical order", () => {
+    assert.deepEqual(normalizeLevels(["debug", "bogus", "critical", "debug"]), ["critical", "debug"]);
+    assert.deepEqual(normalizeLevels(null), []);
 });
 
-test("nextOffset works with a non-default limit too", () => {
-    assert.equal(nextOffset(0, 25), 25);
-    assert.equal(nextOffset(25, 25), 50);
+test("readPersistedLevels defaults to critical only when nothing is stored", () => {
+    assert.deepEqual(readPersistedLevels(makeFakeStorage()), ["critical"]);
 });
 
-test("hasMore is true while the offset already covered is less than total", () => {
-    assert.equal(hasMore(50, 137), true);
-    assert.equal(hasMore(100, 137), true);
+test("readPersistedLevels returns the stored selection in canonical order", () => {
+    const storage = makeFakeStorage({ dashboard_levels: JSON.stringify(["info", "warning"]) });
+    assert.deepEqual(readPersistedLevels(storage), ["warning", "info"]);
 });
 
-test("hasMore is false once the offset reaches or exceeds total", () => {
-    assert.equal(hasMore(137, 137), false);
-    assert.equal(hasMore(150, 137), false);
+test("readPersistedLevels honors an explicitly stored empty selection", () => {
+    assert.deepEqual(readPersistedLevels(makeFakeStorage({ dashboard_levels: "[]" })), []);
 });
 
-test("hasMore is false for an empty result set (offset 0, total 0)", () => {
-    assert.equal(hasMore(0, 0), false);
+test("readPersistedLevels falls back to the default on garbage or a non-array", () => {
+    assert.deepEqual(readPersistedLevels(makeFakeStorage({ dashboard_levels: "{not json" })), ["critical"]);
+    assert.deepEqual(readPersistedLevels(makeFakeStorage({ dashboard_levels: '"critical"' })), ["critical"]);
+});
+
+test("readPersistedLevels degrades to the default instead of throwing when storage throws", () => {
+    assert.deepEqual(readPersistedLevels(makeThrowingStorage()), ["critical"]);
+});
+
+test("persistLevels writes normalized JSON under 'dashboard_levels' and round-trips", () => {
+    const storage = makeFakeStorage();
+    persistLevels(["debug", "critical", "nope"], storage);
+    assert.equal(storage._data.get("dashboard_levels"), '["critical","debug"]');
+    assert.deepEqual(readPersistedLevels(storage), ["critical", "debug"]);
+});
+
+test("persistLevels degrades silently when storage throws", () => {
+    assert.doesNotThrow(() => persistLevels(["critical"], makeThrowingStorage()));
+});
+
+test("toggleLevel adds a missing level in canonical position and removes a present one", () => {
+    assert.deepEqual(toggleLevel(["critical", "info"], "warning"), ["critical", "warning", "info"]);
+    assert.deepEqual(toggleLevel(["critical", "warning"], "critical"), ["warning"]);
+    assert.deepEqual(toggleLevel(["critical"], "critical"), []);
+});
+
+test("levelsLabel renders a human list in canonical order", () => {
+    assert.equal(levelsLabel(["warning", "critical"]), "Critical, Warning");
+    assert.equal(levelsLabel([]), "");
+});
+
+// ---------------------------------------------------------------------
+// Group collapse state
+// ---------------------------------------------------------------------
+
+test("clientKey/sourceKey are distinct namespaces and unambiguous", () => {
+    assert.equal(clientKey("acme-co"), "c:acme-co");
+    assert.notEqual(sourceKey("a", "b:c"), sourceKey("a:b", "c"));
+    assert.notEqual(clientKey("x"), sourceKey("x", ""));
+});
+
+test("isGroupOpen defaults to open only when the group has matching rows", () => {
+    assert.equal(isGroupOpen("c:a", 3, {}), true);
+    assert.equal(isGroupOpen("c:a", 0, {}), false);
+});
+
+test("isGroupOpen prefers an explicit user choice over the default", () => {
+    assert.equal(isGroupOpen("c:a", 3, { "c:a": false }), false);
+    assert.equal(isGroupOpen("c:a", 0, { "c:a": true }), true);
+});
+
+test("recordCollapseChoice stores only choices that differ from the default", () => {
+    assert.deepEqual(recordCollapseChoice({}, "c:a", false, 3), { "c:a": false });
+    assert.deepEqual(recordCollapseChoice({}, "c:a", true, 0), { "c:a": true });
+    // Matching the default clears any explicit choice (no-op for the
+    // programmatic `toggle` event fired on initial render).
+    assert.deepEqual(recordCollapseChoice({ "c:a": false }, "c:a", true, 3), {});
+    assert.deepEqual(recordCollapseChoice({}, "c:a", true, 3), {});
+});
+
+test("recordCollapseChoice does not mutate its input", () => {
+    const before = { "c:a": false };
+    recordCollapseChoice(before, "c:b", false, 2);
+    assert.deepEqual(before, { "c:a": false });
+});
+
+test("collapse state round-trips through storage and degrades on garbage/throws", () => {
+    const storage = makeFakeStorage();
+    persistCollapseState({ "c:a": false, [sourceKey("a", "web")]: true }, storage);
+    assert.deepEqual(readCollapseState(storage), { "c:a": false, [sourceKey("a", "web")]: true });
+    assert.deepEqual(readCollapseState(makeFakeStorage({ dashboard_collapse: "[1,2]" })), {});
+    assert.deepEqual(readCollapseState(makeFakeStorage({ dashboard_collapse: "nope" })), {});
+    assert.deepEqual(readCollapseState(makeThrowingStorage()), {});
+    assert.doesNotThrow(() => persistCollapseState({}, makeThrowingStorage()));
 });
 
 // ---------------------------------------------------------------------
@@ -249,10 +327,10 @@ test("truncateMessage coerces null/undefined to an empty string instead of throw
 // clientDisplayValue
 // ---------------------------------------------------------------------
 
-test("clientDisplayValue returns an em dash for null/empty/missing client", () => {
-    assert.equal(clientDisplayValue(null), "—");
-    assert.equal(clientDisplayValue(undefined), "—");
-    assert.equal(clientDisplayValue(""), "—");
+test("clientDisplayValue labels a null/empty/missing client as '(no client)'", () => {
+    assert.equal(clientDisplayValue(null), "(no client)");
+    assert.equal(clientDisplayValue(undefined), "(no client)");
+    assert.equal(clientDisplayValue(""), "(no client)");
 });
 
 test("clientDisplayValue passes through a real client name unchanged", () => {
@@ -268,24 +346,21 @@ test("buildSummaryUrl constructs the exact summary endpoint with window param", 
     assert.equal(buildSummaryUrl("7d"), "/api/dashboard/summary?window=7d");
 });
 
-test("buildCriticalUrl constructs the exact critical endpoint with window/offset/limit params", () => {
+test("buildGroupsUrl sends window plus canonical, comma-joined levels", () => {
+    assert.equal(buildGroupsUrl("24h", ["critical"]), "/api/dashboard/groups?window=24h&levels=critical");
     assert.equal(
-        buildCriticalUrl("24h", 0, 50),
-        "/api/dashboard/critical?window=24h&offset=0&limit=50"
+        buildGroupsUrl("7d", ["info", "critical"]),
+        "/api/dashboard/groups?window=7d&levels=critical%2Cinfo"
     );
-    assert.equal(
-        buildCriticalUrl("7d", 50, 50),
-        "/api/dashboard/critical?window=7d&offset=50&limit=50"
-    );
-    assert.equal(
-        buildCriticalUrl("1h", 100, 25),
-        "/api/dashboard/critical?window=1h&offset=100&limit=25"
-    );
+});
+
+test("buildGroupsUrl always sends levels, even empty (empty != server default)", () => {
+    assert.equal(buildGroupsUrl("1h", []), "/api/dashboard/groups?window=1h&levels=");
 });
 
 // ---------------------------------------------------------------------
 // Mocked-fetch tests: verifying correct URL/query-param construction end
-// to end through fetchSummary/fetchCritical (which internally call
+// to end through fetchSummary/fetchGroups (which internally call
 // common.js's fetchWithTimeout -> global fetch).
 // ---------------------------------------------------------------------
 
@@ -313,33 +388,18 @@ test("fetchSummary requests the exact summary URL for the given window", async (
     assert.equal(capturedUrl, "/api/dashboard/summary?window=6h");
 });
 
-test("fetchCritical requests the exact critical URL including offset/limit for pagination", async () => {
+test("fetchGroups requests the exact groups URL for the window and levels", async () => {
     let capturedUrl = null;
     await withMockedFetch(
         async (url) => {
             capturedUrl = url;
-            return new Response(JSON.stringify({ alerts: [], total: 0 }), { status: 200 });
+            return new Response(JSON.stringify({ clients: [] }), { status: 200 });
         },
         async () => {
-            await fetchCritical("14d", 50, 50);
+            await fetchGroups("14d", ["warning", "critical"]);
         }
     );
-    assert.equal(capturedUrl, "/api/dashboard/critical?window=14d&offset=50&limit=50");
-});
-
-test("fetchCritical's second page (Load more) uses offset=limit, not offset=rows-returned", async () => {
-    let capturedUrl = null;
-    await withMockedFetch(
-        async (url) => {
-            capturedUrl = url;
-            return new Response(JSON.stringify({ alerts: [], total: 0 }), { status: 200 });
-        },
-        async () => {
-            const offset = nextOffset(0, DEFAULT_LIMIT);
-            await fetchCritical("24h", offset, DEFAULT_LIMIT);
-        }
-    );
-    assert.equal(capturedUrl, "/api/dashboard/critical?window=24h&offset=50&limit=50");
+    assert.equal(capturedUrl, "/api/dashboard/groups?window=14d&levels=critical%2Cwarning");
 });
 
 test("fetchSummary resolves with the parsed JSON body on a 200", async () => {
@@ -379,14 +439,14 @@ test("fetchSummary rejects with a DashboardApiError carrying status+body on a 50
     assert.equal(caught.message, dbDownBody.message);
 });
 
-test("fetchCritical rejects with a DashboardApiError on a 400 (bad window/limit/offset)", async () => {
+test("fetchGroups rejects with a DashboardApiError on a 400 (bad window/levels)", async () => {
     let caught = null;
     await withMockedFetch(
         async () =>
-            new Response(JSON.stringify({ status: "error", message: "limit must be >= 1" }), { status: 400 }),
+            new Response(JSON.stringify({ status: "error", message: "invalid levels" }), { status: 400 }),
         async () => {
             try {
-                await fetchCritical("24h", 0, 0);
+                await fetchGroups("24h", ["critical"]);
             } catch (e) {
                 caught = e;
             }
@@ -394,7 +454,7 @@ test("fetchCritical rejects with a DashboardApiError on a 400 (bad window/limit/
     );
     assert.ok(caught instanceof DashboardApiError);
     assert.equal(caught.status, 400);
-    assert.equal(caught.message, "limit must be >= 1");
+    assert.equal(caught.message, "invalid levels");
 });
 
 // ---------------------------------------------------------------------

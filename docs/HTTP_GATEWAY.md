@@ -9,7 +9,7 @@ The HTTP Gateway acts as a bridge between HTTP-based systems and the MQTT-based 
 - **`auth`** (`src/gateway/auth/`): `/login`, `/logout`, `/api/whoami` -- session-cookie login, CSRF protection, per-IP login throttle, and the `CredentialCache` that fronts Basic/Bearer verification for high-frequency traffic
 - **`api`** (`src/gateway/api/`): `/health`, `/alert`, `/test`, `/docs`, `/docs/<filename>` -- the machine/integration-facing surface, unchanged in spirit from the pre-v2.0.0 gateway
 - **`logs`** (`src/gateway/logs/`): `/logs`, `/api/logs/list`, `/api/logs/tail`, `/api/logs/chunk` -- the log viewer, rewritten for binary/newline-aligned reads and client-side search
-- **`dashboard`** (`src/gateway/dashboard/`): `/dashboard`, `/api/dashboard/summary`, `/api/dashboard/critical` -- new in v2.0.0
+- **`dashboard`** (`src/gateway/dashboard/`): `/dashboard`, `/api/dashboard/summary`, `/api/dashboard/groups` -- new in v2.0.0 (grouped view replaced `/api/dashboard/critical`)
 - **`admin`** (`src/gateway/admin/`): `/admin/users` and sub-routes -- new in v2.0.0, `master_admin`-only user/role/scope administration
 
 ```
@@ -234,12 +234,14 @@ Accepts session, Basic, or Bearer. Returns `401` JSON if unauthenticated (never 
 ```bash
 GET /dashboard                        # HTML page
 GET /api/dashboard/summary?window=24h
-GET /api/dashboard/critical?window=24h&offset=0&limit=50
+GET /api/dashboard/groups?window=24h&levels=critical,warning
 ```
 
 **Authentication**: Session only.
 
-Alert-count cards (critical/warning/notice/info/debug) plus a paginated table of critical alerts, for a selectable time window (`1h`, `6h`, `12h`, `24h`, `7d`, `14d`, `30d`, or `all` -- a 90-day cap, not literally unbounded). Results are scoped server-side to each principal's visible clients for the `logs:read` permission -- there is no client-selecting query parameter; a row with a null/empty `client` is visible to `master_admin` only. `limit` on `/api/dashboard/critical` is clamped to 200. A Postgres outage returns `503` with a `{"status": "error", "error": "database unavailable", ...}` body from the API calls, and a warning banner on the page itself.
+Five level-count cards (critical/warning/notice/info/debug) that double as multi-select level filters (default: critical only), plus the selected time window's alerts grouped **client -> source** as collapsible sections. Each source shows its latest 30 alerts at the selected levels ("showing 30 of N" beyond that -- the log viewer is the place for deep history). Every client/source active in the window is listed with its per-level counts even when nothing matches the selected levels (collapsed and dimmed). Clients and sources are alphabetical; the clientless group sorts last. The level selection and collapse state persist per browser (localStorage).
+
+The time window is one of `1h`, `6h`, `12h`, `24h`, `7d`, `14d`, `30d`, or `all` (a 90-day cap, not literally unbounded). `levels` is a comma-separated subset of the five levels (unknown -> `400`); omitted it defaults to `critical`, and an empty `levels=` returns group counts with no alert rows. Results are scoped server-side to each principal's visible clients for the `logs:read` permission -- there is no client-selecting query parameter; a row with a null/empty `client` is visible to `master_admin` only (as the `""` group). A Postgres outage returns `503` with a `{"status": "error", "error": "database unavailable", ...}` body from the API calls, and a warning banner on the page itself.
 
 **`/api/dashboard/summary` response:**
 ```json
@@ -252,18 +254,30 @@ Alert-count cards (critical/warning/notice/info/debug) plus a paginated table of
 }
 ```
 
-**`/api/dashboard/critical` response:**
+**`/api/dashboard/groups` response:**
 ```json
 {
-  "alerts": [
-    {"id": 123, "timestamp": 1705315800, "category": "security", "title": "Unauthorized Access",
-     "message": "Failed login attempt detected", "source": "web-server", "client": "revysmc",
-     "metadata": {}, "ingestion_source": "http"}
+  "clients": [
+    {"client": "revysmc",
+     "counts": {"critical": 1, "warning": 3, "notice": 0, "info": 40, "debug": 0},
+     "last_seen": 1705315800, "matched": 4,
+     "sources": [
+       {"source": "web-server",
+        "counts": {"critical": 1, "warning": 3, "notice": 0, "info": 40, "debug": 0},
+        "last_seen": 1705315800, "matched": 4,
+        "alerts": [
+          {"id": 123, "timestamp": 1705315800, "level": "critical", "category": "security",
+           "title": "Unauthorized Access", "message": "Failed login attempt detected",
+           "source": "web-server", "client": "revysmc", "metadata": {}, "ingestion_source": "http"}
+        ]}
+     ]}
   ],
-  "total": 1, "since": 1705230600, "scope": ["revysmc", "device-monitor"],
-  "generated_at": 1705317000, "offset": 0, "limit": 50
+  "levels": ["critical", "warning"], "per_group": 30,
+  "since": 1705230600, "scope": ["revysmc", "device-monitor"], "generated_at": 1705317000
 }
 ```
+
+`counts`/`last_seen` cover every level in the window; `matched` is the count at the selected `levels` (it can exceed `len(alerts)`, which is capped at `per_group`).
 
 ### Log Viewer Interface
 

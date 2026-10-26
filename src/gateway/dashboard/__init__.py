@@ -2,7 +2,7 @@
 Alert Manager - gateway.dashboard
 
 `dashboard_bp` (routes.py): `GET /dashboard`, `GET /api/dashboard/summary`,
-`GET /api/dashboard/critical` (Task 22). Session-only auth
+`GET /api/dashboard/groups` (Task 22). Session-only auth
 (`gateway.principal.SESSION_ONLY`) -- this is a browser-only surface, no
 node/script API client is ever expected to hit it (docs/OVERHAUL_PLAN.md
 section 4.6). See routes.py's own module docstring for the full design:

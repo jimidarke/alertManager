@@ -67,7 +67,7 @@ def test_create_app_registers_all_five_blueprints(config, mocker):
     # Task 19 registers `auth` (/login, /logout, /api/whoami); Task 20 adds
     # `api` (/health, /alert, /test, /docs, /docs/<f>); Task 21 adds `logs`
     # (/logs, /api/logs/list, /api/logs/tail, /api/logs/chunk); Task 22 adds
-    # `dashboard` (/dashboard, /api/dashboard/summary, /api/dashboard/critical);
+    # `dashboard` (/dashboard, /api/dashboard/summary, /api/dashboard/groups);
     # Task 23 adds `admin` (/admin/users*); Task 24 adds `GET /` (redirects to
     # /dashboard or /login depending on session state -- see gateway/__init__.py).
     mocker.patch("gateway.mqtt.MqttPublisher.connect_mqtt", return_value=True)
@@ -92,7 +92,7 @@ def test_create_app_registers_all_five_blueprints(config, mocker):
         "/api/logs/chunk",
         "/dashboard",
         "/api/dashboard/summary",
-        "/api/dashboard/critical",
+        "/api/dashboard/groups",
         "/admin/users",
         "/admin/users/new",
         "/admin/users/<username>/edit",

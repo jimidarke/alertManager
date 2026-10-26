@@ -2,11 +2,14 @@
  * Alert Manager - Dashboard page script (Task 25)
  *
  * Drives templates/dashboard.html: the timeframe <select> (persisted to
- * localStorage['dashboard_window']), the 5-card summary grid, the critical
- * alerts table (+ "Load more" pagination), the row-detail <dialog> modal,
- * the "Updated Xs ago" indicator, and 60s auto-refresh (skipped while the
- * tab is hidden). Calls Task 22's `GET /api/dashboard/summary` and
- * `GET /api/dashboard/critical` via common.js's `fetchWithTimeout`.
+ * localStorage['dashboard_window']), the 5 level cards (multi-select
+ * filter toggles, persisted to localStorage['dashboard_levels'], default
+ * Critical only), the client -> source grouped view (nested <details>,
+ * latest <=30 alerts per source, collapse choices persisted to
+ * localStorage['dashboard_collapse']), the row-detail <dialog> modal, the
+ * "Updated Xs ago" indicator, and 60s auto-refresh (skipped while the tab
+ * is hidden). Calls `GET /api/dashboard/summary` and
+ * `GET /api/dashboard/groups` via common.js's `fetchWithTimeout`.
  *
  * --------------------------------------------------------------------
  * Loading common.js: browser vs. Node
@@ -71,13 +74,15 @@
 
     // ------------------------------------------------------------------
     // Constants -- mirror gateway/dashboard/routes.py's own enum/defaults
-    // (`_WINDOW_SECONDS`, `DEFAULT_WINDOW`, `DEFAULT_LIMIT`). Keep these in
-    // sync with that module if its enum/defaults ever change.
+    // (`_WINDOW_SECONDS`, `DEFAULT_WINDOW`, `_LEVELS`, `DEFAULT_LEVELS`).
+    // Keep these in sync with that module if its enum/defaults ever change.
     // ------------------------------------------------------------------
     const WINDOW_STORAGE_KEY = "dashboard_window";
+    const LEVELS_STORAGE_KEY = "dashboard_levels";
+    const COLLAPSE_STORAGE_KEY = "dashboard_collapse";
     const VALID_WINDOWS = ["1h", "6h", "12h", "24h", "7d", "14d", "30d", "all"];
     const DEFAULT_WINDOW = "24h";
-    const DEFAULT_LIMIT = 50;
+    const DEFAULT_LEVELS = ["critical"];
     const MESSAGE_TRUNCATE_LENGTH = 120;
     const LEVELS_ORDER = ["critical", "warning", "notice", "info", "debug"];
     const LEVEL_LABELS = {
@@ -135,17 +140,134 @@
     }
 
     // ------------------------------------------------------------------
-    // Pure logic: pagination offset math
+    // Pure logic: level-filter selection (the cards are toggles)
     // ------------------------------------------------------------------
 
-    /** "Load more" always advances by the fixed page `limit`, per this task's brief -- not by however many rows the last page actually returned. */
-    function nextOffset(offset, limit) {
-        return offset + limit;
+    function getStore(storage) {
+        return storage || (typeof window !== "undefined" ? window.localStorage : null);
     }
 
-    /** Whether another page exists beyond the rows already loaded (offset already advanced past the last fetched page). */
-    function hasMore(offsetAfterPage, total) {
-        return offsetAfterPage < total;
+    /** Filters to known levels, dedupes, and returns them in canonical LEVELS_ORDER. */
+    function normalizeLevels(levels) {
+        const list = Array.isArray(levels) ? levels : [];
+        return LEVELS_ORDER.filter(function (level) {
+            return list.indexOf(level) !== -1;
+        });
+    }
+
+    /**
+     * Reads `localStorage['dashboard_levels']` (a JSON array). Falls back to
+     * DEFAULT_LEVELS when unset, unparseable, not an array, or storage
+     * throws. An explicitly stored EMPTY array is honored (the user turned
+     * every level off) -- that is a valid selection, not a fallback case.
+     */
+    function readPersistedLevels(storage) {
+        const store = getStore(storage);
+        if (!store) {
+            return DEFAULT_LEVELS.slice();
+        }
+        try {
+            const parsed = JSON.parse(store.getItem(LEVELS_STORAGE_KEY));
+            return Array.isArray(parsed) ? normalizeLevels(parsed) : DEFAULT_LEVELS.slice();
+        } catch (e) {
+            return DEFAULT_LEVELS.slice();
+        }
+    }
+
+    function persistLevels(levels, storage) {
+        const store = getStore(storage);
+        if (!store) {
+            return;
+        }
+        try {
+            store.setItem(LEVELS_STORAGE_KEY, JSON.stringify(normalizeLevels(levels)));
+        } catch (e) {
+            // degrade silently
+        }
+    }
+
+    /** Adds `level` if absent, removes it if present; result is always in canonical order. */
+    function toggleLevel(levels, level) {
+        const current = normalizeLevels(levels);
+        if (current.indexOf(level) !== -1) {
+            return current.filter(function (l) {
+                return l !== level;
+            });
+        }
+        return normalizeLevels(current.concat([level]));
+    }
+
+    /** "Critical, Warning" -- human list of the selected levels. */
+    function levelsLabel(levels) {
+        return normalizeLevels(levels)
+            .map(function (level) {
+                return LEVEL_LABELS[level];
+            })
+            .join(", ");
+    }
+
+    // ------------------------------------------------------------------
+    // Pure logic: group collapse state
+    //
+    // `collapse` is a {key: boolean} map of EXPLICIT user choices only.
+    // A group with no explicit choice falls back to its default: open when
+    // it has rows matching the selected levels, collapsed otherwise.
+    // ------------------------------------------------------------------
+
+    function clientKey(client) {
+        return "c:" + client;
+    }
+
+    function sourceKey(client, source) {
+        return "s:" + client + "\u0000" + source;
+    }
+
+    function isGroupOpen(key, matched, collapse) {
+        if (collapse && Object.prototype.hasOwnProperty.call(collapse, key)) {
+            return collapse[key] === true;
+        }
+        return matched > 0;
+    }
+
+    /**
+     * Returns a new collapse map after the group `key` ended up `open`. A
+     * state equal to the default is stored as "no explicit choice" (key
+     * removed), so the group keeps following its default afterwards; a
+     * state differing from the default is stored explicitly.
+     */
+    function recordCollapseChoice(collapse, key, open, matched) {
+        const next = Object.assign({}, collapse);
+        if (open === matched > 0) {
+            delete next[key];
+        } else {
+            next[key] = open;
+        }
+        return next;
+    }
+
+    function readCollapseState(storage) {
+        const store = getStore(storage);
+        if (!store) {
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(store.getItem(COLLAPSE_STORAGE_KEY));
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function persistCollapseState(collapse, storage) {
+        const store = getStore(storage);
+        if (!store) {
+            return;
+        }
+        try {
+            store.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(collapse));
+        } catch (e) {
+            // degrade silently
+        }
     }
 
     // ------------------------------------------------------------------
@@ -172,11 +294,11 @@
         return "/api/dashboard/summary?window=" + encodeURIComponent(windowValue);
     }
 
-    function buildCriticalUrl(windowValue, offset, limit) {
+    /** `levels=` is always sent, even empty -- an empty value means "counts only" server-side, whereas omitting it would default to critical. */
+    function buildGroupsUrl(windowValue, levels) {
         return (
-            "/api/dashboard/critical?window=" + encodeURIComponent(windowValue) +
-            "&offset=" + encodeURIComponent(offset) +
-            "&limit=" + encodeURIComponent(limit)
+            "/api/dashboard/groups?window=" + encodeURIComponent(windowValue) +
+            "&levels=" + encodeURIComponent(normalizeLevels(levels).join(","))
         );
     }
 
@@ -184,9 +306,9 @@
     // Pure logic: small display helpers
     // ------------------------------------------------------------------
 
-    /** Em dash for a null/empty/missing client, per the brief. */
+    /** Group-header label for the clientless group (master_admin only ever sees it). */
     function clientDisplayValue(client) {
-        return client ? client : "—";
+        return client ? client : "(no client)";
     }
 
     // ------------------------------------------------------------------
@@ -223,8 +345,8 @@
         return fetchJson(buildSummaryUrl(windowValue));
     }
 
-    function fetchCritical(windowValue, offset, limit) {
-        return fetchJson(buildCriticalUrl(windowValue, offset, limit));
+    function fetchGroups(windowValue, levels) {
+        return fetchJson(buildGroupsUrl(windowValue, levels));
     }
 
     // ==================================================================
@@ -234,9 +356,8 @@
 
     const state = {
         windowValue: DEFAULT_WINDOW,
-        offset: 0,
-        limit: DEFAULT_LIMIT,
-        total: 0,
+        levels: DEFAULT_LEVELS.slice(),
+        collapse: {},
         lastUpdated: null, // epoch seconds of the last successful fetch
         refreshTimer: null,
         tickTimer: null,
@@ -248,11 +369,15 @@
         els.cardsContainer.textContent = "";
         LEVELS_ORDER.forEach(function (level) {
             const count = (counts && counts[level]) || 0;
+            const selected = state.levels.indexOf(level) !== -1;
 
-            const card = document.createElement("div");
-            card.className = "dashboard-card";
+            const card = document.createElement("button");
+            card.type = "button";
+            card.className = "dashboard-card" + (selected ? " selected" : "");
             card.id = "dashboard-card-" + level;
             card.setAttribute("data-level", level);
+            card.setAttribute("aria-pressed", selected ? "true" : "false");
+            card.title = (selected ? "Hide " : "Show ") + LEVEL_LABELS[level] + " alerts";
 
             const countEl = document.createElement("div");
             countEl.className = "dashboard-card-count";
@@ -266,16 +391,16 @@
             card.appendChild(countEl);
             card.appendChild(labelEl);
 
-            if (level === "critical") {
-                // Pulse ONLY while count > 0 -- toggled here, never via a
-                // bare CSS selector, so a critical card at 0 never pulses.
-                if (count > 0) {
-                    card.classList.add("pulse");
-                }
-                card.addEventListener("click", function () {
-                    els.criticalSection.scrollIntoView({ behavior: "smooth", block: "start" });
-                });
+            // Pulse ONLY while the critical count is > 0 -- toggled here,
+            // never via a bare CSS selector, so a critical card at 0 never
+            // pulses.
+            if (level === "critical" && count > 0) {
+                card.classList.add("pulse");
             }
+
+            card.addEventListener("click", function () {
+                onLevelToggle(level);
+            });
 
             els.cardsContainer.appendChild(card);
         });
@@ -292,29 +417,24 @@
         const abs = document.createElement("span");
         abs.className = "time-absolute";
         abs.textContent = formatLocalizedTime(epochSeconds, getSelectedTimezone());
+        td.title = abs.textContent;
 
         td.appendChild(rel);
         td.appendChild(abs);
         return td;
     }
 
-    function createClientCell(client) {
-        const td = document.createElement("td");
-        td.className = "col-client";
-
-        const pill = document.createElement("span");
-        const hasClient = !!client;
-        pill.className = "client-pill" + (hasClient ? "" : " client-pill-empty");
-        pill.textContent = clientDisplayValue(client);
-
-        td.appendChild(pill);
-        return td;
+    function createLevelBadge(level, text) {
+        const badge = document.createElement("span");
+        badge.className = "badge badge-" + level;
+        badge.textContent = text;
+        return badge;
     }
 
-    function createSourceCell(source) {
+    function createLevelCell(level) {
         const td = document.createElement("td");
-        td.className = "col-source mono";
-        td.textContent = source === null || source === undefined ? "" : String(source);
+        td.className = "col-level";
+        td.appendChild(createLevelBadge(level, LEVEL_LABELS[level] || String(level)));
         return td;
     }
 
@@ -340,8 +460,7 @@
         tr.dataset.alertId = String(alert.id);
 
         tr.appendChild(createTimeCell(alert.timestamp));
-        tr.appendChild(createClientCell(alert.client));
-        tr.appendChild(createSourceCell(alert.source));
+        tr.appendChild(createLevelCell(alert.level));
         tr.appendChild(createAlertCell(alert.title, alert.message));
 
         tr.addEventListener("click", function () {
@@ -351,20 +470,147 @@
         return tr;
     }
 
-    function renderCriticalRows(alerts, append) {
-        if (!append) {
-            els.tbody.textContent = "";
-        }
-        alerts.forEach(function (alert) {
-            els.tbody.appendChild(createRow(alert));
+    /** Per-level count chips for a group header; levels outside the current selection are muted. */
+    function createCountBadges(counts) {
+        const wrap = document.createElement("span");
+        wrap.className = "group-badges";
+        LEVELS_ORDER.forEach(function (level) {
+            const count = (counts && counts[level]) || 0;
+            if (count === 0) {
+                return;
+            }
+            const badge = createLevelBadge(level, count + " " + level);
+            if (state.levels.indexOf(level) === -1) {
+                badge.classList.add("badge-muted");
+            }
+            wrap.appendChild(badge);
         });
+        return wrap;
     }
 
-    function updateEmptyAndLoadMore() {
-        const isEmpty = state.total === 0;
-        els.emptyState.hidden = !isEmpty;
-        els.tableWrap.hidden = isEmpty;
-        els.loadMoreBtn.hidden = isEmpty || !hasMore(state.offset, state.total);
+    function createMeta(text) {
+        const meta = document.createElement("span");
+        meta.className = "group-meta tiny";
+        meta.textContent = text;
+        return meta;
+    }
+
+    /**
+     * Builds a <details> group whose open state comes from isGroupOpen() and
+     * whose user toggles are recorded via recordCollapseChoice(). The
+     * `toggle` event also fires for the initial programmatic `open`, but
+     * that state already equals what isGroupOpen() chose, so recording it
+     * is a no-op for explicit choices and a no-op for defaults.
+     */
+    function createGroup(className, key, matched, summaryChildren) {
+        const details = document.createElement("details");
+        details.className = className + (matched > 0 ? "" : " group-dim");
+        details.open = isGroupOpen(key, matched, state.collapse);
+        details.dataset.groupKey = key;
+
+        const summary = document.createElement("summary");
+        summary.className = "group-summary";
+        summaryChildren.forEach(function (child) {
+            summary.appendChild(child);
+        });
+        details.appendChild(summary);
+
+        details.addEventListener("toggle", function () {
+            const next = recordCollapseChoice(state.collapse, key, details.open, matched);
+            if (JSON.stringify(next) !== JSON.stringify(state.collapse)) {
+                state.collapse = next;
+                persistCollapseState(state.collapse);
+            }
+        });
+
+        return details;
+    }
+
+    function createSourceGroup(clientName, group) {
+        const name = document.createElement("span");
+        name.className = "group-name mono";
+        name.textContent = group.source;
+
+        const children = [name, createCountBadges(group.counts), createMeta("last " + timeAgo(group.last_seen))];
+        if (group.matched > group.alerts.length) {
+            children.push(createMeta("showing " + group.alerts.length + " of " + group.matched));
+        }
+
+        const details = createGroup("group-source", sourceKey(clientName, group.source), group.matched, children);
+
+        if (group.alerts.length === 0) {
+            let total = 0;
+            LEVELS_ORDER.forEach(function (level) {
+                total += (group.counts && group.counts[level]) || 0;
+            });
+            const empty = document.createElement("div");
+            empty.className = "group-empty tiny";
+            empty.textContent =
+                state.levels.length === 0
+                    ? "No levels selected -- " + total + " alerts in window"
+                    : "No " + levelsLabel(state.levels) + " alerts -- " + total + " other alerts in window";
+            details.appendChild(empty);
+            return details;
+        }
+
+        const wrap = document.createElement("div");
+        wrap.className = "dashboard-table-wrap";
+        const table = document.createElement("table");
+        table.className = "group-table";
+        const tbody = document.createElement("tbody");
+        group.alerts.forEach(function (alert) {
+            tbody.appendChild(createRow(alert));
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        details.appendChild(wrap);
+        return details;
+    }
+
+    function createClientGroup(clientGroup) {
+        const name = document.createElement("span");
+        name.className = "group-name" + (clientGroup.client ? "" : " group-name-empty");
+        name.textContent = clientDisplayValue(clientGroup.client);
+
+        const sourceCount = clientGroup.sources.length;
+        const details = createGroup("group-client", clientKey(clientGroup.client), clientGroup.matched, [
+            name,
+            createCountBadges(clientGroup.counts),
+            createMeta(sourceCount + (sourceCount === 1 ? " source" : " sources")),
+            createMeta("last " + timeAgo(clientGroup.last_seen)),
+        ]);
+
+        const body = document.createElement("div");
+        body.className = "group-client-body";
+        clientGroup.sources.forEach(function (group) {
+            body.appendChild(createSourceGroup(clientGroup.client, group));
+        });
+        details.appendChild(body);
+        return details;
+    }
+
+    /** Rebuilds the whole tree in one replaceChildren() call, so a refresh doesn't jump the scroll position. */
+    function renderGroups(data) {
+        const clients = (data && data.clients) || [];
+        const fragment = document.createDocumentFragment();
+        clients.forEach(function (clientGroup) {
+            fragment.appendChild(createClientGroup(clientGroup));
+        });
+        els.groups.replaceChildren(fragment);
+
+        els.emptyState.hidden = clients.length > 0;
+        els.groupsShowing.textContent =
+            state.levels.length === 0
+                ? "No levels selected -- click a card above to show alerts"
+                : "Latest " + ((data && data.per_group) || 30) + " per source: " + levelsLabel(state.levels);
+    }
+
+    function setAllGroupsOpen(open) {
+        // Each assignment fires that group's own `toggle` listener, which
+        // records the choice -- no separate bookkeeping needed here.
+        els.groups.querySelectorAll("details").forEach(function (details) {
+            details.open = open;
+        });
     }
 
     function setDefinitionField(id, value) {
@@ -403,15 +649,8 @@
     }
 
     function openModal(alert) {
-        // The critical-alerts endpoint only ever returns level='critical'
-        // rows (gateway/dashboard/routes.py's `_critical_rows_query`
-        // filters `level = 'critical'` and the row shape has no `level`
-        // field at all) -- populated explicitly anyway, rather than left
-        // as static template markup, both per the brief's literal
-        // "populate ... level badge" instruction and so this keeps working
-        // unmodified if this table's scope ever widens.
-        els.modalLevelBadge.textContent = "Critical";
-        els.modalLevelBadge.className = "badge badge-critical";
+        els.modalLevelBadge.textContent = LEVEL_LABELS[alert.level] || String(alert.level);
+        els.modalLevelBadge.className = "badge badge-" + alert.level;
 
         setDefinitionField("dashboard-modal-field-id", alert.id);
         setDefinitionField("dashboard-modal-field-timestamp", alert.timestamp);
@@ -464,21 +703,17 @@
         els.updatedIndicator.textContent = "Updated " + timeAgo(state.lastUpdated);
     }
 
-    /** Full (re)load: resets pagination to the first page and replaces the table -- used on initial load, timeframe change, and each 60s auto-refresh tick. */
+    /** Full (re)load of cards + groups -- used on initial load, timeframe/level change, and each 60s auto-refresh tick. */
     function loadDashboard(windowValue) {
         state.windowValue = windowValue;
-        state.offset = 0;
 
-        return Promise.all([fetchSummary(windowValue), fetchCritical(windowValue, 0, state.limit)])
+        return Promise.all([fetchSummary(windowValue), fetchGroups(windowValue, state.levels)])
             .then(function (results) {
                 const summary = results[0];
-                const critical = results[1];
+                const groups = results[1];
 
                 renderCards(summary.counts);
-                renderCriticalRows(critical.alerts, false);
-                state.total = critical.total;
-                state.offset = nextOffset(0, state.limit);
-                updateEmptyAndLoadMore();
+                renderGroups(groups);
 
                 state.lastUpdated =
                     typeof summary.generated_at === "number" ? summary.generated_at : Math.floor(Date.now() / 1000);
@@ -488,17 +723,10 @@
             .catch(handleFetchError);
     }
 
-    /** "Load more": appends the next page's rows rather than replacing the table. */
-    function loadMore() {
-        return fetchCritical(state.windowValue, state.offset, state.limit)
-            .then(function (critical) {
-                renderCriticalRows(critical.alerts, true);
-                state.total = critical.total;
-                state.offset = nextOffset(state.offset, state.limit);
-                updateEmptyAndLoadMore();
-                hideErrorBanner();
-            })
-            .catch(handleFetchError);
+    function onLevelToggle(level) {
+        state.levels = toggleLevel(state.levels, level);
+        persistLevels(state.levels);
+        loadDashboard(state.windowValue);
     }
 
     function onWindowChange() {
@@ -517,11 +745,11 @@
             updatedIndicator: document.getElementById("dashboard-updated"),
             errorBanner: document.getElementById("dashboard-error-banner"),
             cardsContainer: document.getElementById("dashboard-cards"),
-            criticalSection: document.getElementById("dashboard-critical-section"),
+            groups: document.getElementById("dashboard-groups"),
+            groupsShowing: document.getElementById("dashboard-groups-showing"),
             emptyState: document.getElementById("dashboard-empty-state"),
-            tableWrap: document.getElementById("dashboard-table-wrap"),
-            tbody: document.getElementById("dashboard-critical-tbody"),
-            loadMoreBtn: document.getElementById("dashboard-load-more"),
+            expandAllBtn: document.getElementById("dashboard-expand-all"),
+            collapseAllBtn: document.getElementById("dashboard-collapse-all"),
             modal: document.getElementById("dashboard-alert-modal"),
             modalClose: document.getElementById("dashboard-modal-close"),
             modalLevelBadge: document.getElementById("dashboard-modal-level-badge"),
@@ -537,14 +765,18 @@
             return;
         }
 
-        state.limit = DEFAULT_LIMIT;
+        state.levels = readPersistedLevels();
+        state.collapse = readCollapseState();
 
         const persisted = readPersistedWindow();
         els.windowSelect.value = persisted;
 
         els.windowSelect.addEventListener("change", onWindowChange);
-        els.loadMoreBtn.addEventListener("click", function () {
-            loadMore();
+        els.expandAllBtn.addEventListener("click", function () {
+            setAllGroupsOpen(true);
+        });
+        els.collapseAllBtn.addEventListener("click", function () {
+            setAllGroupsOpen(false);
         });
         els.modalClose.addEventListener("click", function () {
             els.modal.close();
@@ -578,21 +810,30 @@
     const AlertManagerDashboard = {
         VALID_WINDOWS: VALID_WINDOWS,
         DEFAULT_WINDOW: DEFAULT_WINDOW,
-        DEFAULT_LIMIT: DEFAULT_LIMIT,
+        DEFAULT_LEVELS: DEFAULT_LEVELS,
         MESSAGE_TRUNCATE_LENGTH: MESSAGE_TRUNCATE_LENGTH,
         LEVELS_ORDER: LEVELS_ORDER,
         isValidWindow: isValidWindow,
         readPersistedWindow: readPersistedWindow,
         persistWindow: persistWindow,
-        nextOffset: nextOffset,
-        hasMore: hasMore,
+        normalizeLevels: normalizeLevels,
+        readPersistedLevels: readPersistedLevels,
+        persistLevels: persistLevels,
+        toggleLevel: toggleLevel,
+        levelsLabel: levelsLabel,
+        clientKey: clientKey,
+        sourceKey: sourceKey,
+        isGroupOpen: isGroupOpen,
+        recordCollapseChoice: recordCollapseChoice,
+        readCollapseState: readCollapseState,
+        persistCollapseState: persistCollapseState,
         truncateMessage: truncateMessage,
         buildSummaryUrl: buildSummaryUrl,
-        buildCriticalUrl: buildCriticalUrl,
+        buildGroupsUrl: buildGroupsUrl,
         clientDisplayValue: clientDisplayValue,
         DashboardApiError: DashboardApiError,
         fetchSummary: fetchSummary,
-        fetchCritical: fetchCritical,
+        fetchGroups: fetchGroups,
     };
 
     window.AlertManagerDashboard = AlertManagerDashboard;

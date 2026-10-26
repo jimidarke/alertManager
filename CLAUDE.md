@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Alert Manager - Technical Reference
 
-**Version:** 3.3.0
+**Version:** 3.4.0
 **Last Updated:** 2026-10-26
 
 ## Project Purpose
@@ -80,7 +80,7 @@ Pathways are loaded by `pathways/pathway_manager.py` (`PathwayManager`) and inst
   - **`api`** (`gateway/api/`) -- `GET /health` (no auth), `POST /alert`, `POST /test`, `GET /docs`, `GET /docs/<f>` (unauthenticated, ported verbatim) -- Basic/Bearer only, never a session cookie
   - **`auth`** (`gateway/auth/`) -- `GET/POST /login`, `POST /logout`, `GET /api/whoami` (session, Basic, or Bearer)
   - **`logs`** (`gateway/logs/`) -- `GET /logs` (page), `GET /api/logs/list`, `GET /api/logs/tail`, `GET /api/logs/chunk` -- session **or** Basic/Bearer (keeps `curl -u` shell-test workflows working)
-  - **`dashboard`** (`gateway/dashboard/`) -- `GET /dashboard` (page), `GET /api/dashboard/summary`, `GET /api/dashboard/critical` -- session only
+  - **`dashboard`** (`gateway/dashboard/`) -- `GET /dashboard` (page), `GET /api/dashboard/summary`, `GET /api/dashboard/groups` (alerts grouped client -> source, latest 30 per source at the selected `levels`; the level cards are multi-select filters, default critical) -- session only
   - **`admin`** (`gateway/admin/`) -- `GET /admin/users`, `GET/POST /admin/users/new`, `GET/POST /admin/users/<username>/edit`, `POST .../disable|enable|reset-password`, `POST .../tokens/new`, `POST .../tokens/<id>/revoke`, `POST /admin/users/<username>/delete`, `GET /admin/clients`, `GET/POST /admin/clients/new`, `POST /admin/clients/<name>/disable|enable|delete` -- session only, `master_admin` role required. Delete is a second step: only a *disabled* user/client can be deleted (and never yourself); it removes just the identity/registry rows (a user's tokens and personal `user:<name>` role go with them) and never touches alerts, logs or `auth_audit`
 - **Auth**: session cookie (browser, 12h sliding, `HttpOnly`/`Secure`/`SameSite=Lax`, Flask-WTF CSRF-protected) for `dashboard`/`admin`/browser use of `logs`; HTTP Basic Auth or Bearer Token (argon2id password hash / SHA-256-hashed token, against the Postgres identity store) for `api` and script/device use of `logs`. See "User Access Control" below and `docs/AUTH.md` for the full model.
 
