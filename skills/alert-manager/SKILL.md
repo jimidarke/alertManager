@@ -145,7 +145,7 @@ database/dashboard drops anything non-canonical. The SDK and
 **Auth headers**: `Authorization: Basic <base64 user:pass>` (or curl's
 `-u user:pass`) or `Authorization: Bearer amt_...`. Never a session cookie.
 
-**Response codes** (quick glance — full body shapes in
+**Response codes** (quick glance — retry guidance in
 `references/payload-reference.md`, auth-flavored troubleshooting in
 `references/auth-and-provisioning.md`):
 
